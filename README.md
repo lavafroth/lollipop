@@ -5,9 +5,12 @@ AOSP keyboard to Linux.
 
 ## Core Logic
 
-Initially a key is unlatched.
+For a modifier key `M`, the following table illustrates latching and locking.
+On first run all keys are unlatched.
 
-- Press a modifier once: Latched
-  - Press the same modifier within 500ms: Locked
-    - Press the same modifier: Unlatched
-  - Press the same modifier beyond 500ms: Unlatched
+Initial State | Next `M` struck at | Sticky state
+----|---|---
+Unlatched | Whenever | Latched
+Latched | < 500ms | Locked
+Latched | >= 500ms | Unlatched
+Locked | Whenever | Unlatched
