@@ -1,4 +1,4 @@
-use evdev::{Device, InputEvent, KeyEvent};
+use evdev::{Device, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
@@ -83,6 +83,14 @@ impl InternalState {
 
         Some(events)
     }
+
+    fn led_state(&self) -> i32 {
+        if self.map.values().any(|v| !matches!(v, KeyState::None)) {
+            i32::MAX
+        } else {
+            0
+        }
+    }
 }
 
 fn pick_device() -> Option<Device> {
@@ -94,11 +102,11 @@ fn pick_device() -> Option<Device> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let Some(mut d) = pick_device() else {
+    let (Some(mut d), Some(mut led_sink)) = (pick_device(), pick_device()) else {
         return Ok(());
     };
     while !d.is_grabbed() {
-        println!("trying to grab");
+        // println!("trying to grab");
         let _ = d.grab();
     }
 
@@ -133,9 +141,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match events.next_event().await?.destructure() {
             evdev::EventSummary::Key(key_event, key_code, pressed) => {
                 if let Some(events) = state.morph(key_code, pressed, key_event.timestamp()) {
-                    println!("{state:#?}");
+                    // println!("{state:#?}");
                     device.emit(&events)?;
                 };
+
+                led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
             }
             _ => {}
         }
