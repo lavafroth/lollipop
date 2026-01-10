@@ -1,8 +1,9 @@
 {
-  description = "flake for github:lavafroth/shush";
+  description = "flake for github:lavafroth/lollipop";
 
   outputs =
     {
+      self,
       nixpkgs,
       ...
     }:
@@ -12,6 +13,15 @@
         nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (system: f nixpkgs.legacyPackages.${system});
     in
     {
+      packages = forAllSystems (pkgs: {
+        default = pkgs.rustPlatform.buildRustPackage {
+          pname = "lollipop";
+          version = "1.0.0";
+
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+        };
+      });
 
       devShells = forAllSystems (pkgs: {
 
@@ -19,14 +29,12 @@
           buildInputs = with pkgs; [
             stdenv.cc.cc.lib
           ];
-          LD_LIBRARY_PATH = with pkgs; lib.makeLibraryPath [
-            wayland-protocols
-            wayland
-            libxkbcommon
-            libGL
-          ];
         };
 
       });
+
+      overlays.default = final: prev: {
+        lollipop = self.packages.${final.system}.default;
+      };
     };
 }
