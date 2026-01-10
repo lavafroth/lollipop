@@ -90,15 +90,13 @@ fn pick_device() -> Option<Device> {
         .find(|d| d.name().is_some_and(|name| name.contains("keyboard")))
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (Some(mut keyboard), Some(mut led_sink)) = (pick_device(), pick_device()) else {
         return Ok(());
     };
     while keyboard.grab().is_err() {}
 
-    println!("Found {}", keyboard.name().unwrap_or("a keyboard"));
-    let mut events = keyboard.into_event_stream()?;
+    println!("Taking over {}", keyboard.name().unwrap_or("keyboard"));
     let keys: AttributeSet<KeyCode> = get_all_keys().iter().collect();
 
     let mut lollipop_virtual_device = VirtualDevice::builder()?
@@ -123,13 +121,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        if let evdev::EventSummary::Key(key_event, key_code, pressed) =
-            events.next_event().await?.destructure()
-        {
-            let events = state.transition(key_code, pressed, key_event.timestamp());
-            // println!("{state:#?}");
-            lollipop_virtual_device.emit(&events)?;
-            led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+        let Ok(events) = keyboard.fetch_events() else {
+            continue;
+        };
+        for event in events {
+            if let evdev::EventSummary::Key(key_event, key_code, pressed) = event.destructure() {
+                let events = state.transition(key_code, pressed, key_event.timestamp());
+                // println!("{state:#?}");
+                lollipop_virtual_device.emit(&events)?;
+                led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+            }
         }
     }
 }
