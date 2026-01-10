@@ -1,17 +1,110 @@
-use evdev::uinput::VirtualDevice;
-use evdev::{AttributeSet, EventType, InputEvent, KeyCode, KeyEvent};
-use std::thread::sleep;
-use std::time::Duration;
+use evdev::{Device, InputEvent, KeyEvent};
+use std::collections::BTreeMap;
+use std::fmt::Debug;
+use std::time::{Duration, SystemTime};
 
+use evdev::uinput::VirtualDevice;
+use evdev::{AttributeSet, KeyCode};
+
+#[derive(Clone, Copy)]
 pub enum KeyState {
-    Latched(),
+    Latched(SystemTime),
     Locked,
     None,
 }
 
-fn main() -> std::io::Result<()> {
-    let mut keys = AttributeSet::<KeyCode>::default();
-    keys.insert(KeyCode::KEY_A);
+impl Debug for KeyState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Latched(arg0) => write!(
+                f,
+                "Latched {}s",
+                arg0.elapsed().unwrap_or_default().as_secs()
+            ),
+            Self::Locked => write!(f, "Locked"),
+            Self::None => write!(f, "None"),
+        }
+    }
+}
+
+impl KeyState {
+    fn morph(&self, time: SystemTime) -> KeyState {
+        match self {
+            KeyState::Latched(last_press) => {
+                if time.duration_since(*last_press).unwrap() < Duration::from_millis(500) {
+                    KeyState::Locked
+                } else {
+                    KeyState::None
+                }
+            }
+            KeyState::Locked => KeyState::None,
+            KeyState::None => KeyState::Latched(time),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct InternalState {
+    map: BTreeMap<KeyCode, KeyState>,
+}
+
+impl InternalState {
+    fn morph(
+        &mut self,
+        key: KeyCode,
+        pressed: i32,
+        timestamp: SystemTime,
+    ) -> Option<Vec<InputEvent>> {
+        if let Some(v) = self.map.get(&key) {
+            if pressed == 0 {
+                return None;
+            }
+            let morphed = v.morph(timestamp);
+            self.map.insert(key, morphed);
+            return match morphed {
+                KeyState::None => Some(vec![*KeyEvent::new(key, 0)]),
+                KeyState::Latched(_) => Some(vec![*KeyEvent::new(key, 1)]),
+                _ => None,
+            };
+        };
+
+        let mut events = vec![*KeyEvent::new(key, pressed)];
+        let mut empty = Vec::new();
+        for key in self.map.keys() {
+            if let Some(KeyState::Latched(_)) = self.map.get(key) {
+                events.push(*KeyEvent::new(*key, 0));
+                empty.push(*key);
+            }
+        }
+
+        for key in empty {
+            self.map.insert(key, KeyState::None);
+        }
+
+        Some(events)
+    }
+}
+
+fn pick_device() -> Option<Device> {
+    evdev::enumerate()
+        .map(|(_, device)| device)
+        .filter(|d| d.name().is_some_and(|name| name.contains("keyboard")))
+        .next()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut d) = pick_device() else {
+        return Ok(());
+    };
+    while !d.is_grabbed() {
+        println!("trying to grab");
+        let _ = d.grab();
+    }
+
+    println!("{}", d.name().unwrap_or("some keyboard ig"));
+    let mut events = d.into_event_stream()?;
+    let keys: AttributeSet<KeyCode> = get_all_keys().into_iter().collect();
 
     let mut device = VirtualDevice::builder()?
         .name("lollipop")
@@ -23,24 +116,581 @@ fn main() -> std::io::Result<()> {
         println!("Available as {}", path.display());
     }
 
-    sleep(Duration::from_secs(2));
+    let mut state = InternalState {
+        map: BTreeMap::default(),
+    };
 
-    let code = KeyCode::KEY_A.code();
-
-    loop {
-        // this guarantees a key event
-        let down_event = *KeyEvent::new(KeyCode(code), 1);
-        device.emit(&[down_event]).unwrap();
-        println!("Pressed.");
-        sleep(Duration::from_secs(2));
-
-        // alternativeley we can create a InputEvent, which will be any variant of InputEvent
-        // depending on the type_ value
-        let up_event = InputEvent::new(EventType::KEY.0, code, 0);
-        device.emit(&[up_event]).unwrap();
-        println!("Released.");
-        sleep(Duration::from_secs(2));
+    for key in [
+        KeyCode::KEY_LEFTSHIFT,
+        KeyCode::KEY_LEFTMETA,
+        KeyCode::KEY_LEFTCTRL,
+        KeyCode::KEY_LEFTALT,
+    ] {
+        state.map.insert(key, KeyState::None);
     }
 
-    Ok(())
+    loop {
+        match events.next_event().await?.destructure() {
+            evdev::EventSummary::Key(key_event, key_code, pressed) => {
+                if let Some(events) = state.morph(key_code, pressed, key_event.timestamp()) {
+                    println!("{state:#?}");
+                    device.emit(&events)?;
+                };
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn get_all_keys() -> &'static [KeyCode] {
+    &[
+        evdev::KeyCode::KEY_RESERVED,
+        evdev::KeyCode::KEY_ESC,
+        evdev::KeyCode::KEY_1,
+        evdev::KeyCode::KEY_2,
+        evdev::KeyCode::KEY_3,
+        evdev::KeyCode::KEY_4,
+        evdev::KeyCode::KEY_5,
+        evdev::KeyCode::KEY_6,
+        evdev::KeyCode::KEY_7,
+        evdev::KeyCode::KEY_8,
+        evdev::KeyCode::KEY_9,
+        evdev::KeyCode::KEY_0,
+        evdev::KeyCode::KEY_MINUS,
+        evdev::KeyCode::KEY_EQUAL,
+        evdev::KeyCode::KEY_BACKSPACE,
+        evdev::KeyCode::KEY_TAB,
+        evdev::KeyCode::KEY_Q,
+        evdev::KeyCode::KEY_W,
+        evdev::KeyCode::KEY_E,
+        evdev::KeyCode::KEY_R,
+        evdev::KeyCode::KEY_T,
+        evdev::KeyCode::KEY_Y,
+        evdev::KeyCode::KEY_U,
+        evdev::KeyCode::KEY_I,
+        evdev::KeyCode::KEY_O,
+        evdev::KeyCode::KEY_P,
+        evdev::KeyCode::KEY_LEFTBRACE,
+        evdev::KeyCode::KEY_RIGHTBRACE,
+        evdev::KeyCode::KEY_ENTER,
+        evdev::KeyCode::KEY_LEFTCTRL,
+        evdev::KeyCode::KEY_A,
+        evdev::KeyCode::KEY_S,
+        evdev::KeyCode::KEY_D,
+        evdev::KeyCode::KEY_F,
+        evdev::KeyCode::KEY_G,
+        evdev::KeyCode::KEY_H,
+        evdev::KeyCode::KEY_J,
+        evdev::KeyCode::KEY_K,
+        evdev::KeyCode::KEY_L,
+        evdev::KeyCode::KEY_SEMICOLON,
+        evdev::KeyCode::KEY_APOSTROPHE,
+        evdev::KeyCode::KEY_GRAVE,
+        evdev::KeyCode::KEY_LEFTSHIFT,
+        evdev::KeyCode::KEY_BACKSLASH,
+        evdev::KeyCode::KEY_Z,
+        evdev::KeyCode::KEY_X,
+        evdev::KeyCode::KEY_C,
+        evdev::KeyCode::KEY_V,
+        evdev::KeyCode::KEY_B,
+        evdev::KeyCode::KEY_N,
+        evdev::KeyCode::KEY_M,
+        evdev::KeyCode::KEY_COMMA,
+        evdev::KeyCode::KEY_DOT,
+        evdev::KeyCode::KEY_SLASH,
+        evdev::KeyCode::KEY_RIGHTSHIFT,
+        evdev::KeyCode::KEY_KPASTERISK,
+        evdev::KeyCode::KEY_LEFTALT,
+        evdev::KeyCode::KEY_SPACE,
+        evdev::KeyCode::KEY_CAPSLOCK,
+        evdev::KeyCode::KEY_F1,
+        evdev::KeyCode::KEY_F2,
+        evdev::KeyCode::KEY_F3,
+        evdev::KeyCode::KEY_F4,
+        evdev::KeyCode::KEY_F5,
+        evdev::KeyCode::KEY_F6,
+        evdev::KeyCode::KEY_F7,
+        evdev::KeyCode::KEY_F8,
+        evdev::KeyCode::KEY_F9,
+        evdev::KeyCode::KEY_F10,
+        evdev::KeyCode::KEY_NUMLOCK,
+        evdev::KeyCode::KEY_SCROLLLOCK,
+        evdev::KeyCode::KEY_KP7,
+        evdev::KeyCode::KEY_KP8,
+        evdev::KeyCode::KEY_KP9,
+        evdev::KeyCode::KEY_KPMINUS,
+        evdev::KeyCode::KEY_KP4,
+        evdev::KeyCode::KEY_KP5,
+        evdev::KeyCode::KEY_KP6,
+        evdev::KeyCode::KEY_KPPLUS,
+        evdev::KeyCode::KEY_KP1,
+        evdev::KeyCode::KEY_KP2,
+        evdev::KeyCode::KEY_KP3,
+        evdev::KeyCode::KEY_KP0,
+        evdev::KeyCode::KEY_KPDOT,
+        evdev::KeyCode::KEY_ZENKAKUHANKAKU,
+        evdev::KeyCode::KEY_102ND,
+        evdev::KeyCode::KEY_F11,
+        evdev::KeyCode::KEY_F12,
+        evdev::KeyCode::KEY_RO,
+        evdev::KeyCode::KEY_KATAKANA,
+        evdev::KeyCode::KEY_HIRAGANA,
+        evdev::KeyCode::KEY_HENKAN,
+        evdev::KeyCode::KEY_KATAKANAHIRAGANA,
+        evdev::KeyCode::KEY_MUHENKAN,
+        evdev::KeyCode::KEY_KPJPCOMMA,
+        evdev::KeyCode::KEY_KPENTER,
+        evdev::KeyCode::KEY_RIGHTCTRL,
+        evdev::KeyCode::KEY_KPSLASH,
+        evdev::KeyCode::KEY_SYSRQ,
+        evdev::KeyCode::KEY_RIGHTALT,
+        evdev::KeyCode::KEY_LINEFEED,
+        evdev::KeyCode::KEY_HOME,
+        evdev::KeyCode::KEY_UP,
+        evdev::KeyCode::KEY_PAGEUP,
+        evdev::KeyCode::KEY_LEFT,
+        evdev::KeyCode::KEY_RIGHT,
+        evdev::KeyCode::KEY_END,
+        evdev::KeyCode::KEY_DOWN,
+        evdev::KeyCode::KEY_PAGEDOWN,
+        evdev::KeyCode::KEY_INSERT,
+        evdev::KeyCode::KEY_DELETE,
+        evdev::KeyCode::KEY_MACRO,
+        evdev::KeyCode::KEY_MUTE,
+        evdev::KeyCode::KEY_VOLUMEDOWN,
+        evdev::KeyCode::KEY_VOLUMEUP,
+        evdev::KeyCode::KEY_POWER,
+        evdev::KeyCode::KEY_KPEQUAL,
+        evdev::KeyCode::KEY_KPPLUSMINUS,
+        evdev::KeyCode::KEY_PAUSE,
+        evdev::KeyCode::KEY_SCALE,
+        evdev::KeyCode::KEY_KPCOMMA,
+        evdev::KeyCode::KEY_HANGEUL,
+        evdev::KeyCode::KEY_HANJA,
+        evdev::KeyCode::KEY_YEN,
+        evdev::KeyCode::KEY_LEFTMETA,
+        evdev::KeyCode::KEY_RIGHTMETA,
+        evdev::KeyCode::KEY_COMPOSE,
+        evdev::KeyCode::KEY_STOP,
+        evdev::KeyCode::KEY_AGAIN,
+        evdev::KeyCode::KEY_PROPS,
+        evdev::KeyCode::KEY_UNDO,
+        evdev::KeyCode::KEY_FRONT,
+        evdev::KeyCode::KEY_COPY,
+        evdev::KeyCode::KEY_OPEN,
+        evdev::KeyCode::KEY_PASTE,
+        evdev::KeyCode::KEY_FIND,
+        evdev::KeyCode::KEY_CUT,
+        evdev::KeyCode::KEY_HELP,
+        evdev::KeyCode::KEY_MENU,
+        evdev::KeyCode::KEY_CALC,
+        evdev::KeyCode::KEY_SETUP,
+        evdev::KeyCode::KEY_SLEEP,
+        evdev::KeyCode::KEY_WAKEUP,
+        evdev::KeyCode::KEY_FILE,
+        evdev::KeyCode::KEY_SENDFILE,
+        evdev::KeyCode::KEY_DELETEFILE,
+        evdev::KeyCode::KEY_XFER,
+        evdev::KeyCode::KEY_PROG1,
+        evdev::KeyCode::KEY_PROG2,
+        evdev::KeyCode::KEY_WWW,
+        evdev::KeyCode::KEY_MSDOS,
+        evdev::KeyCode::KEY_COFFEE,
+        evdev::KeyCode::KEY_DIRECTION,
+        evdev::KeyCode::KEY_ROTATE_DISPLAY,
+        evdev::KeyCode::KEY_CYCLEWINDOWS,
+        evdev::KeyCode::KEY_MAIL,
+        evdev::KeyCode::KEY_BOOKMARKS,
+        evdev::KeyCode::KEY_COMPUTER,
+        evdev::KeyCode::KEY_BACK,
+        evdev::KeyCode::KEY_FORWARD,
+        evdev::KeyCode::KEY_CLOSECD,
+        evdev::KeyCode::KEY_EJECTCD,
+        evdev::KeyCode::KEY_EJECTCLOSECD,
+        evdev::KeyCode::KEY_NEXTSONG,
+        evdev::KeyCode::KEY_PLAYPAUSE,
+        evdev::KeyCode::KEY_PREVIOUSSONG,
+        evdev::KeyCode::KEY_STOPCD,
+        evdev::KeyCode::KEY_RECORD,
+        evdev::KeyCode::KEY_REWIND,
+        evdev::KeyCode::KEY_PHONE,
+        evdev::KeyCode::KEY_ISO,
+        evdev::KeyCode::KEY_CONFIG,
+        evdev::KeyCode::KEY_HOMEPAGE,
+        evdev::KeyCode::KEY_REFRESH,
+        evdev::KeyCode::KEY_EXIT,
+        evdev::KeyCode::KEY_MOVE,
+        evdev::KeyCode::KEY_EDIT,
+        evdev::KeyCode::KEY_SCROLLUP,
+        evdev::KeyCode::KEY_SCROLLDOWN,
+        evdev::KeyCode::KEY_KPLEFTPAREN,
+        evdev::KeyCode::KEY_KPRIGHTPAREN,
+        evdev::KeyCode::KEY_NEW,
+        evdev::KeyCode::KEY_REDO,
+        evdev::KeyCode::KEY_F13,
+        evdev::KeyCode::KEY_F14,
+        evdev::KeyCode::KEY_F15,
+        evdev::KeyCode::KEY_F16,
+        evdev::KeyCode::KEY_F17,
+        evdev::KeyCode::KEY_F18,
+        evdev::KeyCode::KEY_F19,
+        evdev::KeyCode::KEY_F20,
+        evdev::KeyCode::KEY_F21,
+        evdev::KeyCode::KEY_F22,
+        evdev::KeyCode::KEY_F23,
+        evdev::KeyCode::KEY_F24,
+        evdev::KeyCode::KEY_PLAYCD,
+        evdev::KeyCode::KEY_PAUSECD,
+        evdev::KeyCode::KEY_PROG3,
+        evdev::KeyCode::KEY_PROG4,
+        evdev::KeyCode::KEY_DASHBOARD,
+        evdev::KeyCode::KEY_SUSPEND,
+        evdev::KeyCode::KEY_CLOSE,
+        evdev::KeyCode::KEY_PLAY,
+        evdev::KeyCode::KEY_FASTFORWARD,
+        evdev::KeyCode::KEY_BASSBOOST,
+        evdev::KeyCode::KEY_PRINT,
+        evdev::KeyCode::KEY_HP,
+        evdev::KeyCode::KEY_CAMERA,
+        evdev::KeyCode::KEY_SOUND,
+        evdev::KeyCode::KEY_QUESTION,
+        evdev::KeyCode::KEY_EMAIL,
+        evdev::KeyCode::KEY_CHAT,
+        evdev::KeyCode::KEY_SEARCH,
+        evdev::KeyCode::KEY_CONNECT,
+        evdev::KeyCode::KEY_FINANCE,
+        evdev::KeyCode::KEY_SPORT,
+        evdev::KeyCode::KEY_SHOP,
+        evdev::KeyCode::KEY_ALTERASE,
+        evdev::KeyCode::KEY_CANCEL,
+        evdev::KeyCode::KEY_BRIGHTNESSDOWN,
+        evdev::KeyCode::KEY_BRIGHTNESSUP,
+        evdev::KeyCode::KEY_MEDIA,
+        evdev::KeyCode::KEY_SWITCHVIDEOMODE,
+        evdev::KeyCode::KEY_KBDILLUMTOGGLE,
+        evdev::KeyCode::KEY_KBDILLUMDOWN,
+        evdev::KeyCode::KEY_KBDILLUMUP,
+        evdev::KeyCode::KEY_SEND,
+        evdev::KeyCode::KEY_REPLY,
+        evdev::KeyCode::KEY_FORWARDMAIL,
+        evdev::KeyCode::KEY_SAVE,
+        evdev::KeyCode::KEY_DOCUMENTS,
+        evdev::KeyCode::KEY_BATTERY,
+        evdev::KeyCode::KEY_BLUETOOTH,
+        evdev::KeyCode::KEY_WLAN,
+        evdev::KeyCode::KEY_UWB,
+        evdev::KeyCode::KEY_UNKNOWN,
+        evdev::KeyCode::KEY_VIDEO_NEXT,
+        evdev::KeyCode::KEY_VIDEO_PREV,
+        evdev::KeyCode::KEY_BRIGHTNESS_CYCLE,
+        evdev::KeyCode::KEY_BRIGHTNESS_AUTO,
+        evdev::KeyCode::KEY_DISPLAY_OFF,
+        evdev::KeyCode::KEY_WWAN,
+        evdev::KeyCode::KEY_RFKILL,
+        evdev::KeyCode::KEY_MICMUTE,
+        evdev::KeyCode::BTN_0,
+        evdev::KeyCode::BTN_1,
+        evdev::KeyCode::BTN_2,
+        evdev::KeyCode::BTN_3,
+        evdev::KeyCode::BTN_4,
+        evdev::KeyCode::BTN_5,
+        evdev::KeyCode::BTN_6,
+        evdev::KeyCode::BTN_7,
+        evdev::KeyCode::BTN_8,
+        evdev::KeyCode::BTN_9,
+        evdev::KeyCode::BTN_LEFT,
+        evdev::KeyCode::BTN_RIGHT,
+        evdev::KeyCode::BTN_MIDDLE,
+        evdev::KeyCode::BTN_SIDE,
+        evdev::KeyCode::BTN_EXTRA,
+        evdev::KeyCode::BTN_FORWARD,
+        evdev::KeyCode::BTN_BACK,
+        evdev::KeyCode::BTN_TASK,
+        evdev::KeyCode::BTN_TRIGGER,
+        evdev::KeyCode::BTN_THUMB,
+        evdev::KeyCode::BTN_THUMB2,
+        evdev::KeyCode::BTN_TOP,
+        evdev::KeyCode::BTN_TOP2,
+        evdev::KeyCode::BTN_PINKIE,
+        evdev::KeyCode::BTN_BASE,
+        evdev::KeyCode::BTN_BASE2,
+        evdev::KeyCode::BTN_BASE3,
+        evdev::KeyCode::BTN_BASE4,
+        evdev::KeyCode::BTN_BASE5,
+        evdev::KeyCode::BTN_BASE6,
+        evdev::KeyCode::BTN_DEAD,
+        evdev::KeyCode::BTN_SOUTH,
+        evdev::KeyCode::BTN_EAST,
+        evdev::KeyCode::BTN_C,
+        evdev::KeyCode::BTN_NORTH,
+        evdev::KeyCode::BTN_WEST,
+        evdev::KeyCode::BTN_Z,
+        evdev::KeyCode::BTN_TL,
+        evdev::KeyCode::BTN_TR,
+        evdev::KeyCode::BTN_TL2,
+        evdev::KeyCode::BTN_TR2,
+        evdev::KeyCode::BTN_SELECT,
+        evdev::KeyCode::BTN_START,
+        evdev::KeyCode::BTN_MODE,
+        evdev::KeyCode::BTN_THUMBL,
+        evdev::KeyCode::BTN_THUMBR,
+        evdev::KeyCode::BTN_TOOL_PEN,
+        evdev::KeyCode::BTN_TOOL_RUBBER,
+        evdev::KeyCode::BTN_TOOL_BRUSH,
+        evdev::KeyCode::BTN_TOOL_PENCIL,
+        evdev::KeyCode::BTN_TOOL_AIRBRUSH,
+        evdev::KeyCode::BTN_TOOL_FINGER,
+        evdev::KeyCode::BTN_TOOL_MOUSE,
+        evdev::KeyCode::BTN_TOOL_LENS,
+        evdev::KeyCode::BTN_TOOL_QUINTTAP,
+        evdev::KeyCode::BTN_TOUCH,
+        evdev::KeyCode::BTN_STYLUS,
+        evdev::KeyCode::BTN_STYLUS2,
+        evdev::KeyCode::BTN_TOOL_DOUBLETAP,
+        evdev::KeyCode::BTN_TOOL_TRIPLETAP,
+        evdev::KeyCode::BTN_TOOL_QUADTAP,
+        evdev::KeyCode::BTN_GEAR_DOWN,
+        evdev::KeyCode::BTN_GEAR_UP,
+        evdev::KeyCode::KEY_OK,
+        evdev::KeyCode::KEY_SELECT,
+        evdev::KeyCode::KEY_GOTO,
+        evdev::KeyCode::KEY_CLEAR,
+        evdev::KeyCode::KEY_POWER2,
+        evdev::KeyCode::KEY_OPTION,
+        evdev::KeyCode::KEY_INFO,
+        evdev::KeyCode::KEY_TIME,
+        evdev::KeyCode::KEY_VENDOR,
+        evdev::KeyCode::KEY_ARCHIVE,
+        evdev::KeyCode::KEY_PROGRAM,
+        evdev::KeyCode::KEY_CHANNEL,
+        evdev::KeyCode::KEY_FAVORITES,
+        evdev::KeyCode::KEY_EPG,
+        evdev::KeyCode::KEY_PVR,
+        evdev::KeyCode::KEY_MHP,
+        evdev::KeyCode::KEY_LANGUAGE,
+        evdev::KeyCode::KEY_TITLE,
+        evdev::KeyCode::KEY_SUBTITLE,
+        evdev::KeyCode::KEY_ANGLE,
+        evdev::KeyCode::KEY_ZOOM,
+        evdev::KeyCode::KEY_FULL_SCREEN,
+        evdev::KeyCode::KEY_MODE,
+        evdev::KeyCode::KEY_KEYBOARD,
+        evdev::KeyCode::KEY_SCREEN,
+        evdev::KeyCode::KEY_PC,
+        evdev::KeyCode::KEY_TV,
+        evdev::KeyCode::KEY_TV2,
+        evdev::KeyCode::KEY_VCR,
+        evdev::KeyCode::KEY_VCR2,
+        evdev::KeyCode::KEY_SAT,
+        evdev::KeyCode::KEY_SAT2,
+        evdev::KeyCode::KEY_CD,
+        evdev::KeyCode::KEY_TAPE,
+        evdev::KeyCode::KEY_RADIO,
+        evdev::KeyCode::KEY_TUNER,
+        evdev::KeyCode::KEY_PLAYER,
+        evdev::KeyCode::KEY_TEXT,
+        evdev::KeyCode::KEY_DVD,
+        evdev::KeyCode::KEY_AUX,
+        evdev::KeyCode::KEY_MP3,
+        evdev::KeyCode::KEY_AUDIO,
+        evdev::KeyCode::KEY_VIDEO,
+        evdev::KeyCode::KEY_DIRECTORY,
+        evdev::KeyCode::KEY_LIST,
+        evdev::KeyCode::KEY_MEMO,
+        evdev::KeyCode::KEY_CALENDAR,
+        evdev::KeyCode::KEY_RED,
+        evdev::KeyCode::KEY_GREEN,
+        evdev::KeyCode::KEY_YELLOW,
+        evdev::KeyCode::KEY_BLUE,
+        evdev::KeyCode::KEY_CHANNELUP,
+        evdev::KeyCode::KEY_CHANNELDOWN,
+        evdev::KeyCode::KEY_FIRST,
+        evdev::KeyCode::KEY_LAST,
+        evdev::KeyCode::KEY_AB,
+        evdev::KeyCode::KEY_NEXT,
+        evdev::KeyCode::KEY_RESTART,
+        evdev::KeyCode::KEY_SLOW,
+        evdev::KeyCode::KEY_SHUFFLE,
+        evdev::KeyCode::KEY_BREAK,
+        evdev::KeyCode::KEY_PREVIOUS,
+        evdev::KeyCode::KEY_DIGITS,
+        evdev::KeyCode::KEY_TEEN,
+        evdev::KeyCode::KEY_TWEN,
+        evdev::KeyCode::KEY_VIDEOPHONE,
+        evdev::KeyCode::KEY_GAMES,
+        evdev::KeyCode::KEY_ZOOMIN,
+        evdev::KeyCode::KEY_ZOOMOUT,
+        evdev::KeyCode::KEY_ZOOMRESET,
+        evdev::KeyCode::KEY_WORDPROCESSOR,
+        evdev::KeyCode::KEY_EDITOR,
+        evdev::KeyCode::KEY_SPREADSHEET,
+        evdev::KeyCode::KEY_GRAPHICSEDITOR,
+        evdev::KeyCode::KEY_PRESENTATION,
+        evdev::KeyCode::KEY_DATABASE,
+        evdev::KeyCode::KEY_NEWS,
+        evdev::KeyCode::KEY_VOICEMAIL,
+        evdev::KeyCode::KEY_ADDRESSBOOK,
+        evdev::KeyCode::KEY_MESSENGER,
+        evdev::KeyCode::KEY_DISPLAYTOGGLE,
+        evdev::KeyCode::KEY_SPELLCHECK,
+        evdev::KeyCode::KEY_LOGOFF,
+        evdev::KeyCode::KEY_DOLLAR,
+        evdev::KeyCode::KEY_EURO,
+        evdev::KeyCode::KEY_FRAMEBACK,
+        evdev::KeyCode::KEY_FRAMEFORWARD,
+        evdev::KeyCode::KEY_CONTEXT_MENU,
+        evdev::KeyCode::KEY_MEDIA_REPEAT,
+        evdev::KeyCode::KEY_10CHANNELSUP,
+        evdev::KeyCode::KEY_10CHANNELSDOWN,
+        evdev::KeyCode::KEY_IMAGES,
+        evdev::KeyCode::KEY_DEL_EOL,
+        evdev::KeyCode::KEY_DEL_EOS,
+        evdev::KeyCode::KEY_INS_LINE,
+        evdev::KeyCode::KEY_DEL_LINE,
+        evdev::KeyCode::KEY_FN,
+        evdev::KeyCode::KEY_FN_ESC,
+        evdev::KeyCode::KEY_FN_F1,
+        evdev::KeyCode::KEY_FN_F2,
+        evdev::KeyCode::KEY_FN_F3,
+        evdev::KeyCode::KEY_FN_F4,
+        evdev::KeyCode::KEY_FN_F5,
+        evdev::KeyCode::KEY_FN_F6,
+        evdev::KeyCode::KEY_FN_F7,
+        evdev::KeyCode::KEY_FN_F8,
+        evdev::KeyCode::KEY_FN_F9,
+        evdev::KeyCode::KEY_FN_F10,
+        evdev::KeyCode::KEY_FN_F11,
+        evdev::KeyCode::KEY_FN_F12,
+        evdev::KeyCode::KEY_FN_1,
+        evdev::KeyCode::KEY_FN_2,
+        evdev::KeyCode::KEY_FN_D,
+        evdev::KeyCode::KEY_FN_E,
+        evdev::KeyCode::KEY_FN_F,
+        evdev::KeyCode::KEY_FN_S,
+        evdev::KeyCode::KEY_FN_B,
+        evdev::KeyCode::KEY_BRL_DOT1,
+        evdev::KeyCode::KEY_BRL_DOT2,
+        evdev::KeyCode::KEY_BRL_DOT3,
+        evdev::KeyCode::KEY_BRL_DOT4,
+        evdev::KeyCode::KEY_BRL_DOT5,
+        evdev::KeyCode::KEY_BRL_DOT6,
+        evdev::KeyCode::KEY_BRL_DOT7,
+        evdev::KeyCode::KEY_BRL_DOT8,
+        evdev::KeyCode::KEY_BRL_DOT9,
+        evdev::KeyCode::KEY_BRL_DOT10,
+        evdev::KeyCode::KEY_NUMERIC_0,
+        evdev::KeyCode::KEY_NUMERIC_1,
+        evdev::KeyCode::KEY_NUMERIC_2,
+        evdev::KeyCode::KEY_NUMERIC_3,
+        evdev::KeyCode::KEY_NUMERIC_4,
+        evdev::KeyCode::KEY_NUMERIC_5,
+        evdev::KeyCode::KEY_NUMERIC_6,
+        evdev::KeyCode::KEY_NUMERIC_7,
+        evdev::KeyCode::KEY_NUMERIC_8,
+        evdev::KeyCode::KEY_NUMERIC_9,
+        evdev::KeyCode::KEY_NUMERIC_STAR,
+        evdev::KeyCode::KEY_NUMERIC_POUND,
+        evdev::KeyCode::KEY_NUMERIC_A,
+        evdev::KeyCode::KEY_NUMERIC_B,
+        evdev::KeyCode::KEY_NUMERIC_C,
+        evdev::KeyCode::KEY_NUMERIC_D,
+        evdev::KeyCode::KEY_CAMERA_FOCUS,
+        evdev::KeyCode::KEY_WPS_BUTTON,
+        evdev::KeyCode::KEY_TOUCHPAD_TOGGLE,
+        evdev::KeyCode::KEY_TOUCHPAD_ON,
+        evdev::KeyCode::KEY_TOUCHPAD_OFF,
+        evdev::KeyCode::KEY_CAMERA_ZOOMIN,
+        evdev::KeyCode::KEY_CAMERA_ZOOMOUT,
+        evdev::KeyCode::KEY_CAMERA_UP,
+        evdev::KeyCode::KEY_CAMERA_DOWN,
+        evdev::KeyCode::KEY_CAMERA_LEFT,
+        evdev::KeyCode::KEY_CAMERA_RIGHT,
+        evdev::KeyCode::KEY_ATTENDANT_ON,
+        evdev::KeyCode::KEY_ATTENDANT_OFF,
+        evdev::KeyCode::KEY_ATTENDANT_TOGGLE,
+        evdev::KeyCode::KEY_LIGHTS_TOGGLE,
+        evdev::KeyCode::BTN_DPAD_UP,
+        evdev::KeyCode::BTN_DPAD_DOWN,
+        evdev::KeyCode::BTN_DPAD_LEFT,
+        evdev::KeyCode::BTN_DPAD_RIGHT,
+        evdev::KeyCode::KEY_ALS_TOGGLE,
+        evdev::KeyCode::KEY_BUTTONCONFIG,
+        evdev::KeyCode::KEY_TASKMANAGER,
+        evdev::KeyCode::KEY_JOURNAL,
+        evdev::KeyCode::KEY_CONTROLPANEL,
+        evdev::KeyCode::KEY_APPSELECT,
+        evdev::KeyCode::KEY_SCREENSAVER,
+        evdev::KeyCode::KEY_VOICECOMMAND,
+        evdev::KeyCode::KEY_ASSISTANT,
+        evdev::KeyCode::KEY_KBD_LAYOUT_NEXT,
+        evdev::KeyCode::KEY_BRIGHTNESS_MIN,
+        evdev::KeyCode::KEY_BRIGHTNESS_MAX,
+        evdev::KeyCode::KEY_KBDINPUTASSIST_PREV,
+        evdev::KeyCode::KEY_KBDINPUTASSIST_NEXT,
+        evdev::KeyCode::KEY_KBDINPUTASSIST_PREVGROUP,
+        evdev::KeyCode::KEY_KBDINPUTASSIST_NEXTGROUP,
+        evdev::KeyCode::KEY_KBDINPUTASSIST_ACCEPT,
+        evdev::KeyCode::KEY_KBDINPUTASSIST_CANCEL,
+        evdev::KeyCode::KEY_RIGHT_UP,
+        evdev::KeyCode::KEY_RIGHT_DOWN,
+        evdev::KeyCode::KEY_LEFT_UP,
+        evdev::KeyCode::KEY_LEFT_DOWN,
+        evdev::KeyCode::KEY_ROOT_MENU,
+        evdev::KeyCode::KEY_MEDIA_TOP_MENU,
+        evdev::KeyCode::KEY_NUMERIC_11,
+        evdev::KeyCode::KEY_NUMERIC_12,
+        evdev::KeyCode::KEY_AUDIO_DESC,
+        evdev::KeyCode::KEY_3D_MODE,
+        evdev::KeyCode::KEY_NEXT_FAVORITE,
+        evdev::KeyCode::KEY_STOP_RECORD,
+        evdev::KeyCode::KEY_PAUSE_RECORD,
+        evdev::KeyCode::KEY_VOD,
+        evdev::KeyCode::KEY_UNMUTE,
+        evdev::KeyCode::KEY_FASTREVERSE,
+        evdev::KeyCode::KEY_SLOWREVERSE,
+        evdev::KeyCode::KEY_DATA,
+        evdev::KeyCode::KEY_ONSCREEN_KEYBOARD,
+        evdev::KeyCode::KEY_PRIVACY_SCREEN_TOGGLE,
+        evdev::KeyCode::KEY_SELECTIVE_SCREENSHOT,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY1,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY2,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY3,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY4,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY5,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY6,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY7,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY8,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY9,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY10,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY11,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY12,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY13,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY14,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY15,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY16,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY17,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY18,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY19,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY20,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY21,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY22,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY23,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY24,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY25,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY26,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY27,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY28,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY29,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY30,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY31,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY32,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY33,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY34,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY35,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY36,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY37,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY38,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY39,
+        evdev::KeyCode::BTN_TRIGGER_HAPPY40,
+    ]
 }
