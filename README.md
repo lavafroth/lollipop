@@ -20,6 +20,7 @@ Locked | Whenever | Unlatched
 - Ridiculously fast.
 - Release binary size is smaller than an average wallpaper.
 - Simple `ini` config file with example provided in the repo.
+- Indicates latched/locked state by switching on the Caps Lock LED.
 
 ## Getting Started
 
