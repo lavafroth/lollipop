@@ -1,0 +1,9 @@
+[Unit]
+Description="Lollipop sticky keys service"
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/lollipop
+
+[Install]
+WantedBy=multi-user.target

@@ -29,20 +29,11 @@ Locked | Whenever | Unlatched
 ```sh
 cargo build --release
 ```
-
-Optionally place the binary in /usr/local/bin/
-
-```sh
-mkdir -p /usr/local/bin
-cp ./target/release/lollipop /usr/local/bin/lollipop
-```
-
-### Run
+### Install
 
 ```sh
-sudo lollipop || sudo ./target/release/lollipop
+install -o root -g root {./target/release,/usr/bin}/lollipop
+cp ./systemd/lollipop.service /etc/systemd/system/lollipop.service
+systemctl daemon-reload
+systemctl enable --now lollipop
 ```
-
-## Systemd service
-
-Coming soon
