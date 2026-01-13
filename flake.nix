@@ -28,6 +28,9 @@
         default = pkgs.mkShell {
           buildInputs = with pkgs; [
             stdenv.cc.cc.lib
+            rust-analyzer
+            cargo
+            rustc
           ];
         };
 
