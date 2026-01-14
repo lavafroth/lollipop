@@ -23,8 +23,26 @@
         };
       });
 
-      devShells = forAllSystems (pkgs: {
+      nixosModules.default = {config, lib, pkgs, ...}:
+        let cfg = config.services.lollipop;
+        in {
+        options.services.lollipop = {
+          enable = lib.mkEnableOption "Lollipop sticky keys service";
+        };
 
+        config = lib.mkIf cfg.enable {
+          systemd.services.lollipop = {
+            description = "Lollipop sticky keys service";
+            wantedBy = [ "multi-user.target" ];
+            serviceConfig = {
+              ExecStart = "${self.packages.${pkgs.system}.default}/bin/lollipop";
+              Type = "exec";
+            };
+          };
+        };
+      };
+
+      devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           buildInputs = with pkgs; [
             stdenv.cc.cc.lib
