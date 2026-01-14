@@ -88,51 +88,83 @@ impl InternalState {
     }
 }
 
-fn pick_device() -> Option<Device> {
+fn pick_device() -> Result<Device, Error> {
     evdev::enumerate()
         .map(|(_, device)| device)
         .find(|d| d.name().is_some_and(|name| name.contains("keyboard")))
+        .ok_or(Error::NoKeyboardDevice)
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut modifiers = vec![];
-    let mut timeout = 500;
-    if let Some(config) = std::env::args().nth(1) {
-        for line in fs::read_to_string(config)?.trim().lines() {
-            match line.split_once("=") {
-                Some(("modifiers", comma_separated_modifiers)) => {
-                    for modifier in comma_separated_modifiers.split(",") {
-                        match modifier_name_to_key_code(modifier) {
-                            Some(modifier) => modifiers.push(modifier),
-                            None => {
-                                eprintln!(
-                                    "invalid modifier `{modifier}` supplied in config, valid modifiers are: leftshift, rightshift, leftctrl, rightctrl, compose, leftmeta, fn, capslock, rightmeta"
-                                );
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Some(("timeout", timeout_str)) => match timeout_str.parse() {
-                    Ok(milliseconds) => timeout = milliseconds,
-                    Err(e) => {
-                        eprintln!(
-                            "failed to parse locking timeout from config: {e}, `{timeout_str}` supplied"
-                        );
-                        std::process::exit(1);
-                    }
-                },
-                _ => {
-                    eprintln!("invalid line in config: `{line}`");
-                    std::process::exit(1);
-                }
-            }
+pub struct Config {
+    modifiers: Vec<KeyCode>,
+    timeout: u64,
+    keyboard_device: Option<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            modifiers: vec![
+                KeyCode::KEY_LEFTSHIFT,
+                KeyCode::KEY_LEFTMETA,
+                KeyCode::KEY_LEFTCTRL,
+                KeyCode::KEY_LEFTALT,
+            ],
+            timeout: 500,
+            keyboard_device: None,
         }
     }
+}
 
-    let (Some(mut keyboard), Some(mut led_sink)) = (pick_device(), pick_device()) else {
-        return Ok(());
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("failed to open a handle to keyboard device at path {path:?}: {io}")]
+    OpenDeviceHandle { io: std::io::Error, path: String },
+
+    #[error("no keyboard device available to augment input keypresses of")]
+    NoKeyboardDevice,
+
+    #[error(
+        "invalid modifier {0:?} supplied in config, valid modifiers are: leftshift, rightshift, leftctrl, rightctrl, compose, leftmeta, fn, capslock, rightmeta"
+    )]
+    InvalidModifier(String),
+    #[error(
+        "invalid locking timeout {0:?} supplied, must be a positive integer for the number of milliseconds"
+    )]
+    InvalidTimeout(String),
+
+    #[error("invalid line in encoutered config: {0:?}")]
+    InvalidConfig(String),
+
+    #[error("failed to read config file {path:?}: {io}")]
+    FailedReadingConfig { io: std::io::Error, path: String },
+}
+
+fn open_device(path: &str) -> Result<(Device, Device), Error> {
+    Ok((
+        Device::open(path).map_err(|io| Error::OpenDeviceHandle {
+            io,
+            path: path.to_string(),
+        })?,
+        Device::open(path).map_err(|io| Error::OpenDeviceHandle {
+            io,
+            path: path.to_string(),
+        })?,
+    ))
+}
+
+fn main() -> Result<(), anyhow::Error> {
+    let config = match std::env::args().nth(1) {
+        Some(config_file) => parse_config(&config_file)?,
+        None => Config::default(),
     };
+
+    let (mut keyboard, mut led_sink) = if let Some(device_path) = config.keyboard_device {
+        open_device(&device_path)?
+    } else {
+        (pick_device()?, pick_device()?)
+    };
+
     while keyboard.grab().is_err() {}
 
     println!("Taking over {}", keyboard.name().unwrap_or("keyboard"));
@@ -150,19 +182,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut state = InternalState {
         modifiers: BTreeMap::default(),
-        timeout: Duration::from_millis(timeout),
+        timeout: Duration::from_millis(config.timeout),
     };
 
-    if modifiers.is_empty() {
-        modifiers.extend([
-            KeyCode::KEY_LEFTSHIFT,
-            KeyCode::KEY_LEFTMETA,
-            KeyCode::KEY_LEFTCTRL,
-            KeyCode::KEY_LEFTALT,
-        ]);
-    }
-
-    for key in modifiers {
+    for key in config.modifiers {
         state.modifiers.insert(key, KeyState::None);
     }
 
@@ -180,6 +203,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
+}
+
+fn parse_config(config_path: &str) -> Result<Config, Error> {
+    let mut config = Config::default();
+    let config_string =
+        fs::read_to_string(config_path).map_err(|io| Error::FailedReadingConfig {
+            io,
+            path: config_path.to_string(),
+        })?;
+    for line in config_string.trim().lines() {
+        match line.split_once("=") {
+            Some(("modifiers", comma_separated_modifiers)) => {
+                for modifier_str in comma_separated_modifiers.split(",") {
+                    let modifier = modifier_name_to_key_code(modifier_str)
+                        .ok_or_else(|| Error::InvalidModifier(modifier_str.to_owned()))?;
+                    config.modifiers.push(modifier);
+                }
+            }
+            Some(("timeout", timeout_str)) => match timeout_str.parse() {
+                Ok(milliseconds) => config.timeout = milliseconds,
+                Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
+            },
+            Some(("device", device_path)) => config.keyboard_device = Some(device_path.to_owned()),
+            _ => Err(Error::InvalidConfig(line.to_owned()))?,
+        }
+    }
+    Ok(config)
 }
 
 fn modifier_name_to_key_code(s: &str) -> Option<KeyCode> {
