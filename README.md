@@ -37,3 +37,30 @@ cp ./systemd/lollipop.service /etc/systemd/system/lollipop.service
 systemctl daemon-reload
 systemctl enable --now lollipop
 ```
+
+## SystemD service for NixOS
+
+Add the input to your flake
+
+```nix
+{
+  inputs.nixos-cosmic.url = "github:lavafroth/lollipop";
+
+  outputs = { self, nixpkgs, lollipop, ... }: {
+    nixosConfigurations = {
+      yourMachine = nixpkgs.lib.nixosSystem {
+        modules = [
+          lollipop.nixosModules.default
+          ./configuration.nix
+        ];
+      };
+    };
+  };
+}
+```
+
+Enable the service in your `configuration.nix` file.
+
+```nix
+services.lollipop.enable = true;
+```
