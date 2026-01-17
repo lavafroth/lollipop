@@ -1,20 +1,15 @@
 # Lollipop
 
-Keyboard modifier remapper that brings sticky keys functionality like Android's
-AOSP keyboard to Linux.
-
+Modifier key remapper bringing Android's AOSP keyboard sticky keys to Linux.
 
 ## Behavior
 
-For a modifier key `M`, the following table illustrates latching and locking.
-On first run all keys are unlatched.
+- Single tap a modifier to latch
+- If the next tap is within 500ms the modifier is locked
+- If 500ms is elapsed, the next tap unlatches the key
+- Single tap in locked state unlocks the key
 
-Initial State | Next `M` struck at | Sticky state
-----|---|---
-Unlatched | Whenever | Latched
-Latched | < 500ms | Locked
-Latched | >= 500ms | Unlatched
-Locked | Whenever | Unlatched
+The 500ms delay is configurable.
 
 ## Features
 - Ridiculously fast.
