@@ -13,7 +13,7 @@ The 500ms delay is configurable.
 
 ## Features
 - Ridiculously fast.
-- Release binary size is smaller 1MB.
+- Release binary size is smaller than 1MB.
 - Simple `ini` config file with example provided in the repo.
 - Indicates latched/locked state by switching on the Caps Lock LED.
 
@@ -39,7 +39,7 @@ Add the input to your flake
 
 ```nix
 {
-  inputs.nixos-cosmic.url = "github:lavafroth/lollipop";
+  inputs.lollipop.url = "github:lavafroth/lollipop";
 
   outputs = { self, nixpkgs, lollipop, ... }: {
     nixosConfigurations = {
@@ -63,7 +63,8 @@ services.lollipop.enable = true;
 ## Configuration
 
 Lollipop is configured with a simple `ini` file with `key=value` pair syntax.
-Check out the example [config file](./config.ini) which shows the use of all the config options.
+Check out the example [config file](./config.ini) which shows the use of all the
+config options.
 
 ### `modifiers`
 
@@ -78,13 +79,13 @@ The admissible delay between the taps of a double-tap for locking a key.
 
 The input device whose inputs get augmented.
 
-Generally this is some
-`/dev/inputX` where X is a positive integer. Can also be set to the default
-value `autodetect` which will automatically grab the first device that appears
-as a keyboard.
+Generally this is some `/dev/inputX` where X is a positive integer. Can also be
+set to the default value `autodetect` which will automatically grab the first
+device that appears as a keyboard.
 
-> Note: this option is only available to specify a keyboard when
-certain peripheral devices may get incorrectly reported as keyboards.
+> [!NOTE]
+> this option is only available to specify a keyboard when certain peripheral
+devices may get incorrectly reported as keyboards.
 
 ### `clear_all_with_escape`
 
