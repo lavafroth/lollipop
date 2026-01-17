@@ -1,6 +1,6 @@
 # Lollipop
 
-Opinionated key remapper that brings sticky keys functionality like Android's
+Keyboard modifier remapper that brings sticky keys functionality like Android's
 AOSP keyboard to Linux.
 
 
@@ -38,7 +38,7 @@ systemctl daemon-reload
 systemctl enable --now lollipop
 ```
 
-## SystemD service for NixOS
+## NixOS service
 
 Add the input to your flake
 
@@ -64,3 +64,14 @@ Enable the service in your `configuration.nix` file.
 ```nix
 services.lollipop.enable = true;
 ```
+
+## Configuration
+
+- `modifiers`: Comma separated list of modifier keys.
+- `timeout`: The admissible delay between the taps of a double-tap for locking a key.
+- `device`: The input device whose inputs get augmented. Generally this is some
+`/dev/inputX` where X is a positive integer. Can also be set to the default
+value `autodetect` which will automatically grab the first device that appears
+as a keyboard. Note: this option is only available to specify a keyboard when
+certain peripheral devices may get incorrectly reported as keyboards.
+- `clear_all_with_escape`: The escape key clears all locked and latched states on all keys. Defaults to `true` or `yes`, set it to `no` or `false` to disable.
