@@ -99,11 +99,13 @@ pub struct Config {
     modifiers: Vec<KeyCode>,
     timeout: u64,
     keyboard_device: Option<String>,
+    clear_all_with_escape: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
+            clear_all_with_escape: true,
             modifiers: vec![
                 KeyCode::KEY_LEFTSHIFT,
                 KeyCode::KEY_LEFTMETA,
@@ -225,6 +227,14 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
                 Ok(milliseconds) => config.timeout = milliseconds,
                 Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
             },
+            Some(("device", "autodetect")) => {}
+            Some(("clear_all_with_escape", clear_all_with_escape)) => {
+                match clear_all_with_escape.to_lowercase().as_ref() {
+                    "yes" | "true" => config.clear_all_with_escape = true,
+                    "no" | "false" => config.clear_all_with_escape = false,
+                    _ => Err(Error::InvalidConfig(line.to_string()))?,
+                }
+            }
             Some(("device", device_path)) => config.keyboard_device = Some(device_path.to_owned()),
             _ => Err(Error::InvalidConfig(line.to_owned()))?,
         }
