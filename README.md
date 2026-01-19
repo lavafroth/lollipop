@@ -60,28 +60,36 @@ Enable the service in your `configuration.nix` file.
 services.lollipop.enable = true;
 ```
 
-## Configuration
+## Configuration Options
 
 Lollipop is configured with a simple `ini` file with `key=value` pair syntax.
+Being an opinionated tool, all configuration settings are optional.
 Check out the example [config file](./config.ini) which shows the use of all the
 config options.
 
 ### `modifiers`
 
-Comma separated list of modifier keys.
+A comma-separated list of modifier keys to enable.
 
+Example: `modifiers=leftshift,leftctrl,compose`  
+Default: `modifiers=leftshift,leftctrl,compose,leftmeta,fn`
 
 ### `timeout`
 
-The admissible delay between the taps of a double-tap for locking a key.
+The admissible delay in milliseconds between the taps of a double-tap for locking a key.
+
+Example: `timeout=1000`  
+Default: `timeout=500`
 
 ### `device`
 
-The input device whose inputs get augmented.
+Specifies the input device to augment. This could bee set to a `/dev/inputX` device, where X is a positive integer.
 
-Generally this is some `/dev/inputX` where X is a positive integer. Can also be
-set to the default value `autodetect` which will automatically grab the first
-device that appears as a keyboard.
+Example: `device=/dev/input0`  
+Default:`device=autodetect`
+
+The default `autodetect` automatically picks the first keyboard device.
+*Note:*  Using `autodetect` can sometimes incorrectly identify peripheral devices as keyboards.
 
 > [!NOTE]
 > this option is only available to specify a keyboard when certain peripheral
@@ -89,7 +97,10 @@ devices may get incorrectly reported as keyboards.
 
 ### `clear_all_with_escape`
 
-The escape key clears all locked and latched states on all keys.
+When set to `true` or `yes`, pressing the escape key clears all latched and locked keys.
 
-Defaults to `true` or `yes`, set it to `no` or `false` to disable.
+Example: `clear_all_with_escape=no`  
+Default:`clear_all_with_escape=true`
+
+Possible values: `true`, `yes`, `no`, `false`
 
