@@ -8,7 +8,7 @@ use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, KeyCode};
 mod key_codes;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum KeyState {
     Latched(SystemTime),
     Locked,
@@ -57,10 +57,23 @@ impl KeyState {
 pub struct InternalState {
     modifiers: BTreeMap<KeyCode, KeyState>,
     timeout: Duration,
+    clear_all_with_escape: bool,
 }
 
 impl InternalState {
     fn transition(&mut self, key: KeyCode, pressed: i32, timestamp: SystemTime) -> Vec<InputEvent> {
+        if self.clear_all_with_escape && key == KeyCode::KEY_ESC {
+            let mut events = vec![];
+            for (key, key_state) in self.modifiers.iter_mut() {
+                if !KeyState::None.eq(key_state) {
+                    *key_state = KeyState::None;
+                    events.push(*KeyEvent::new(*key, 0));
+                }
+            }
+
+            return events;
+        }
+
         if let Some(key_state) = self.modifiers.get_mut(&key) {
             if pressed == 1 {
                 key_state.transition(timestamp, self.timeout);
@@ -183,6 +196,7 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     let mut state = InternalState {
+        clear_all_with_escape: config.clear_all_with_escape,
         modifiers: BTreeMap::default(),
         timeout: Duration::from_millis(config.timeout),
     };
