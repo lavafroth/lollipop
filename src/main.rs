@@ -1,4 +1,4 @@
-use evdev::{Device, InputEvent, KeyEvent, LedCode, LedEvent};
+use evdev::{AbsoluteAxisCode, Device, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::fs;
@@ -54,13 +54,56 @@ impl KeyState {
     }
 }
 
+pub struct Touchpad {
+    tap_held: bool,
+    position: [i32; 2],
+    buffer: Vec<InputEvent>,
+    last_release: Option<SystemTime>,
+}
+
 pub struct InternalState {
     modifiers: BTreeMap<KeyCode, KeyState>,
     timeout: Duration,
     clear_all_with_escape: bool,
+    touchpad: Touchpad,
 }
 
+const TOUCH_RELEASED: i32 = 0;
+
 impl InternalState {
+    fn respond_touch(&mut self, this_keypress: i32) {
+        if this_keypress == 1 {
+            // println!("tapped");
+            self.touchpad.tap_held = true;
+            self.touchpad.last_release = None;
+        }
+
+        if self.touchpad.tap_held && this_keypress == TOUCH_RELEASED {
+            self.touchpad.last_release = Some(SystemTime::now());
+
+            for (key, key_state) in self.modifiers.iter_mut() {
+                if !KeyState::None.eq(key_state) {
+                    *key_state = KeyState::None;
+                    self.touchpad.buffer.push(*KeyEvent::new(*key, 0));
+                }
+            }
+        }
+    }
+    fn touchpad_dragging(&mut self, index: usize, xy: i32) {
+        if !self.touchpad.tap_held {
+            return;
+        }
+
+        if self.touchpad.position[index] == -1 {
+            self.touchpad.position[index] = xy;
+            return;
+        }
+
+        if (self.touchpad.position[index] - xy).abs() > 300 {
+            self.touchpad.tap_held = false;
+            self.touchpad.position = [-1, -1];
+        }
+    }
     fn transition(&mut self, key: KeyCode, pressed: i32, timestamp: SystemTime) -> Vec<InputEvent> {
         if self.clear_all_with_escape && key == KeyCode::KEY_ESC {
             let mut events = vec![];
@@ -105,6 +148,15 @@ fn pick_device() -> Result<Device, Error> {
     evdev::enumerate()
         .map(|(_, device)| device)
         .find(|d| d.name().is_some_and(|name| name.contains("keyboard")))
+        .ok_or(Error::NoKeyboardDevice)
+}
+fn pick_touchpad() -> Result<Device, Error> {
+    evdev::enumerate()
+        .map(|(_, device)| device)
+        .find(|d| {
+            d.name()
+                .is_some_and(|name| name.to_lowercase().contains("touchpad"))
+        })
         .ok_or(Error::NoKeyboardDevice)
 }
 
@@ -168,7 +220,8 @@ fn open_device(path: &str) -> Result<(Device, Device), Error> {
     ))
 }
 
-fn main() -> Result<(), anyhow::Error> {
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
     let config = match std::env::args().nth(1) {
         Some(config_file) => parse_config(&config_file)?,
         None => Config::default(),
@@ -180,11 +233,12 @@ fn main() -> Result<(), anyhow::Error> {
         (pick_device()?, pick_device()?)
     };
 
+    let touchpad = pick_touchpad()?;
+
     while keyboard.grab().is_err() {}
 
     println!("Taking over {}", keyboard.name().unwrap_or("keyboard"));
     let keys: AttributeSet<KeyCode> = key_codes::ALL.iter().collect();
-
     let mut lollipop_virtual_device = VirtualDevice::builder()?
         .name("lollipop")
         .with_keys(&keys)?
@@ -199,25 +253,60 @@ fn main() -> Result<(), anyhow::Error> {
         clear_all_with_escape: config.clear_all_with_escape,
         modifiers: BTreeMap::default(),
         timeout: Duration::from_millis(config.timeout),
+        touchpad: Touchpad {
+            tap_held: false,
+            position: [-1, -1],
+            buffer: vec![],
+            last_release: None,
+        },
     };
 
     for key in config.modifiers {
         state.modifiers.insert(key, KeyState::None);
     }
 
+    let mut keyboard_events = keyboard.into_event_stream()?;
+    let mut touchpad_events = touchpad.into_event_stream()?;
+
     loop {
-        // fetch events blocks for new events
-        let Ok(events) = keyboard.fetch_events() else {
-            continue;
-        };
-        for event in events {
-            if let evdev::EventSummary::Key(key_event, key_code, pressed) = event.destructure() {
-                let events = state.transition(key_code, pressed, key_event.timestamp());
-                // println!("{state:#?}");
-                lollipop_virtual_device.emit(&events)?;
-                led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
-            }
+        if state
+            .touchpad
+            .last_release
+            .and_then(|v| v.elapsed().ok())
+            .is_some_and(|v| v > Duration::from_millis(200))
+        {
+            lollipop_virtual_device.emit(&state.touchpad.buffer)?;
+            state.touchpad.buffer.clear();
         }
+        tokio::select! {
+            Ok(event) = keyboard_events.next_event() => {
+                if let evdev::EventSummary::Key(key_event, key_code, pressed) = event.destructure() {
+                    let events = state.transition(key_code, pressed, key_event.timestamp());
+                    // println!("{state:#?}");
+                    lollipop_virtual_device.emit(&events)?;
+                    led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+                }
+            }
+
+            Ok(event) = touchpad_events.next_event() => {
+
+                if let evdev::EventSummary::Key(_key_event, KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
+                    state.respond_touch(pressed);
+                    led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+                }
+                if let evdev::EventSummary::AbsoluteAxis(_key_event, ev, xy) = event.destructure() {
+                    match ev {
+                        AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y => {
+                            state.touchpad_dragging(ev.0 as usize, xy)
+                        },
+                        _ => {
+                        }
+                    }
+
+                }
+            }
+            // _ => {println!("waiiiiitiingg");}
+        };
     }
 }
 
