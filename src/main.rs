@@ -1,8 +1,8 @@
-use evdev::{AbsoluteAxisCode, Device, InputEvent, KeyEvent, LedCode, LedEvent};
+use evdev::{AbsoluteAxisCode, Device, EventStream, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::fs;
 use std::time::{Duration, SystemTime};
+use std::{fs, io};
 
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, KeyCode};
@@ -150,6 +150,7 @@ fn pick_device() -> Result<Device, Error> {
         .find(|d| d.name().is_some_and(|name| name.contains("keyboard")))
         .ok_or(Error::NoKeyboardDevice)
 }
+
 fn pick_touchpad() -> Result<Device, Error> {
     evdev::enumerate()
         .map(|(_, device)| device)
@@ -165,6 +166,7 @@ pub struct Config {
     timeout: u64,
     keyboard_device: Option<String>,
     clear_all_with_escape: bool,
+    touchpad: bool,
 }
 
 impl Default for Config {
@@ -179,6 +181,7 @@ impl Default for Config {
             ],
             timeout: 500,
             keyboard_device: None,
+            touchpad: false,
         }
     }
 }
@@ -220,6 +223,12 @@ fn open_device(path: &str) -> Result<(Device, Device), Error> {
     ))
 }
 
+async fn handle_touchpad(
+    touchpad_events: Option<&mut EventStream>,
+) -> Option<io::Result<InputEvent>> {
+    Some(touchpad_events?.next_event().await)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let config = match std::env::args().nth(1) {
@@ -233,7 +242,12 @@ async fn main() -> Result<(), anyhow::Error> {
         (pick_device()?, pick_device()?)
     };
 
-    let touchpad = pick_touchpad()?;
+    let mut touchpad_events = if config.touchpad {
+        let touchpad = pick_touchpad()?;
+        Some(touchpad.into_event_stream()?)
+    } else {
+        None
+    };
 
     while keyboard.grab().is_err() {}
 
@@ -266,8 +280,9 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     let mut keyboard_events = keyboard.into_event_stream()?;
-    let mut touchpad_events = touchpad.into_event_stream()?;
 
+    let isme = touchpad_events.is_some();
+    println!("{isme}");
     loop {
         if state
             .touchpad
@@ -288,7 +303,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 }
             }
 
-            Ok(event) = touchpad_events.next_event() => {
+            Some(Ok(event)) = handle_touchpad(touchpad_events.as_mut()) => {
 
                 if let evdev::EventSummary::Key(_key_event, KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
                     state.respond_touch(pressed);
@@ -305,7 +320,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
                 }
             }
-            // _ => {println!("waiiiiitiingg");}
         };
     }
 }
