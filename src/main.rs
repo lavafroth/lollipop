@@ -371,7 +371,7 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
             path: config_path.to_string(),
         })?;
     for line in config_string.trim().lines() {
-        match line {
+        match line.trim() {
             "" => {
                 newline += 1;
                 if newline > 1 {
