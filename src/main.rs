@@ -243,8 +243,7 @@ async fn main() -> Result<(), anyhow::Error> {
     };
 
     let mut touchpad_events = if config.touchpad {
-        let touchpad = pick_touchpad()?;
-        Some(touchpad.into_event_stream()?)
+        Some(pick_touchpad()?.into_event_stream()?)
     } else {
         None
     };
@@ -307,15 +306,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     state.respond_touch(pressed);
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
                 }
-                if let evdev::EventSummary::AbsoluteAxis(_touchpad_event, ev, xy) = event.destructure() {
-                    match ev {
-                        AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y => {
-                            state.touchpad_dragging(ev.0 as usize, xy)
-                        },
-                        _ => {
-                        }
-                    }
-
+                if let evdev::EventSummary::AbsoluteAxis(_touchpad_event, AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {
+                    state.touchpad_dragging(event.code() as usize, xy)
                 }
             }
         };
