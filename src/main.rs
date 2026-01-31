@@ -168,6 +168,7 @@ pub struct Config {
     keyboard_device: Option<String>,
     clear_all_with_escape: bool,
     touchpad: bool,
+    touchpad_timeout: u64,
 }
 
 impl Default for Config {
@@ -183,6 +184,7 @@ impl Default for Config {
             timeout: 500,
             keyboard_device: None,
             touchpad: false,
+            touchpad_timeout: 200,
         }
     }
 }
@@ -282,12 +284,14 @@ fn main() -> Result<(), anyhow::Error> {
         state.modifiers.insert(key, KeyState::None);
     }
 
+    let touchpad_timeout = Duration::from_millis(config.touchpad_timeout);
+
     loop {
         if state
             .touchpad
             .last_release
             .and_then(|v| v.elapsed().ok())
-            .is_some_and(|v| v > Duration::from_millis(200))
+            .is_some_and(|v| v > touchpad_timeout)
         {
             lollipop_virtual_device.emit(&state.touchpad.buffer)?;
             state.touchpad.buffer.clear();
@@ -350,12 +354,17 @@ fn main() -> Result<(), anyhow::Error> {
     }
 }
 
+#[repr(u8)]
+#[derive(PartialEq, Clone, Copy)]
+enum ConfigSection {
+    Global,
+    Touchpad,
+}
+
 fn parse_config(config_path: &str) -> Result<Config, Error> {
     let mut config = Config::default();
-    const TOUCHPAD_SECTION: u8 = 1;
-    const GLOBAL_SECTION: u8 = 0;
-    let mut section = GLOBAL_SECTION;
-    let mut lines_after_section = 0;
+    let mut section = ConfigSection::Global;
+    let mut newline = 0;
     let config_string =
         fs::read_to_string(config_path).map_err(|io| Error::FailedReadingConfig {
             io,
@@ -364,48 +373,55 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
     for line in config_string.trim().lines() {
         match line {
             "" => {
-                lines_after_section += 1;
-                if lines_after_section > 1 {
-                    section = GLOBAL_SECTION;
+                newline += 1;
+                if newline > 1 {
+                    section = ConfigSection::Global;
+                    newline = 0;
                 }
                 continue;
             }
             "[touchpad]" => {
-                section = TOUCHPAD_SECTION;
+                section = ConfigSection::Touchpad;
                 continue;
             }
             _ => {
-                lines_after_section = 0;
+                newline = 0;
             }
         }
         match (section, line.split_once("=")) {
-            (GLOBAL_SECTION, Some(("modifiers", comma_separated_modifiers))) => {
+            (ConfigSection::Global, Some(("modifiers", comma_separated_modifiers))) => {
                 for modifier_str in comma_separated_modifiers.split(",") {
                     let modifier = modifier_name_to_key_code(modifier_str)
                         .ok_or_else(|| Error::InvalidModifier(modifier_str.to_owned()))?;
                     config.modifiers.push(modifier);
                 }
             }
-            (GLOBAL_SECTION, Some(("timeout", timeout_str))) => match timeout_str.parse() {
+            (ConfigSection::Global, Some(("timeout", timeout_str))) => match timeout_str.parse() {
                 Ok(milliseconds) => config.timeout = milliseconds,
                 Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
             },
-            (GLOBAL_SECTION, Some(("device", "autodetect"))) => {}
-            (GLOBAL_SECTION, Some(("clear_all_with_escape", clear_all_with_escape))) => {
+            (ConfigSection::Global, Some(("device", "autodetect"))) => {}
+            (ConfigSection::Global, Some(("clear_all_with_escape", clear_all_with_escape))) => {
                 match clear_all_with_escape.to_lowercase().as_ref() {
                     "yes" | "true" => config.clear_all_with_escape = true,
                     "no" | "false" => config.clear_all_with_escape = false,
                     _ => Err(Error::InvalidConfig(line.to_string()))?,
                 }
             }
-            (TOUCHPAD_SECTION, Some(("enabled", touchpad))) => {
+            (ConfigSection::Touchpad, Some(("timeout", timeout_str))) => {
+                match timeout_str.parse() {
+                    Ok(milliseconds) => config.touchpad_timeout = milliseconds,
+                    Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
+                }
+            }
+            (ConfigSection::Touchpad, Some(("enabled", touchpad))) => {
                 match touchpad.to_lowercase().as_ref() {
                     "yes" | "true" => config.touchpad = true,
                     "no" | "false" => config.touchpad = false,
                     _ => Err(Error::InvalidConfig(line.to_string()))?,
                 }
             }
-            (GLOBAL_SECTION, Some(("device", device_path))) => {
+            (ConfigSection::Global, Some(("device", device_path))) => {
                 config.keyboard_device = Some(device_path.to_owned())
             }
             _ => Err(Error::InvalidConfig(line.to_owned()))?,
