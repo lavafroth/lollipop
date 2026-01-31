@@ -350,6 +350,11 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
                     _ => Err(Error::InvalidConfig(line.to_string()))?,
                 }
             }
+            Some(("touchpad", touchpad)) => match touchpad.to_lowercase().as_ref() {
+                "yes" | "true" => config.touchpad = true,
+                "no" | "false" => config.touchpad = false,
+                _ => Err(Error::InvalidConfig(line.to_string()))?,
+            },
             Some(("device", device_path)) => config.keyboard_device = Some(device_path.to_owned()),
             _ => Err(Error::InvalidConfig(line.to_owned()))?,
         }
