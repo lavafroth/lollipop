@@ -356,14 +356,14 @@ fn main() -> Result<(), anyhow::Error> {
 
 #[repr(u8)]
 #[derive(PartialEq, Clone, Copy)]
-enum ConfigSection {
+enum Section {
     Global,
     Touchpad,
 }
 
 fn parse_config(config_path: &str) -> Result<Config, Error> {
     let mut config = Config::default();
-    let mut section = ConfigSection::Global;
+    let mut section = Section::Global;
     let mut newline = 0;
     let config_string =
         fs::read_to_string(config_path).map_err(|io| Error::FailedReadingConfig {
@@ -371,57 +371,60 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
             path: config_path.to_string(),
         })?;
     for line in config_string.trim().lines() {
-        match line.trim() {
+        let line = line.trim();
+        match line {
             "" => {
-                newline += 1;
-                if newline > 1 {
-                    section = ConfigSection::Global;
+                if newline == 1 {
+                    section = Section::Global;
                     newline = 0;
                 }
+                newline += 1;
                 continue;
             }
             "[touchpad]" => {
-                section = ConfigSection::Touchpad;
+                section = Section::Touchpad;
+                newline = 0;
                 continue;
             }
             _ => {
                 newline = 0;
             }
         }
-        match (section, line.split_once("=")) {
-            (ConfigSection::Global, Some(("modifiers", comma_separated_modifiers))) => {
+
+        let Some((key, value)) = line.split_once("=") else {
+            Err(Error::InvalidConfig(line.to_owned()))?
+        };
+
+        match (section, key, value) {
+            (Section::Global, "modifiers", comma_separated_modifiers) => {
                 for modifier_str in comma_separated_modifiers.split(",") {
                     let modifier = modifier_name_to_key_code(modifier_str)
                         .ok_or_else(|| Error::InvalidModifier(modifier_str.to_owned()))?;
                     config.modifiers.push(modifier);
                 }
             }
-            (ConfigSection::Global, Some(("timeout", timeout_str))) => match timeout_str.parse() {
+            (Section::Global, "timeout", timeout_str) => match timeout_str.parse() {
                 Ok(milliseconds) => config.timeout = milliseconds,
                 Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
             },
-            (ConfigSection::Global, Some(("device", "autodetect"))) => {}
-            (ConfigSection::Global, Some(("clear_all_with_escape", clear_all_with_escape))) => {
+            (Section::Global, "device", "autodetect") => {}
+            (Section::Global, "clear_all_with_escape", clear_all_with_escape) => {
                 match clear_all_with_escape.to_lowercase().as_ref() {
                     "yes" | "true" => config.clear_all_with_escape = true,
                     "no" | "false" => config.clear_all_with_escape = false,
                     _ => Err(Error::InvalidConfig(line.to_string()))?,
                 }
             }
-            (ConfigSection::Touchpad, Some(("timeout", timeout_str))) => {
-                match timeout_str.parse() {
-                    Ok(milliseconds) => config.touchpad_timeout = milliseconds,
-                    Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
-                }
-            }
-            (ConfigSection::Touchpad, Some(("enabled", touchpad))) => {
-                match touchpad.to_lowercase().as_ref() {
-                    "yes" | "true" => config.touchpad = true,
-                    "no" | "false" => config.touchpad = false,
-                    _ => Err(Error::InvalidConfig(line.to_string()))?,
-                }
-            }
-            (ConfigSection::Global, Some(("device", device_path))) => {
+            (Section::Touchpad, "timeout", timeout_str) => match timeout_str.parse() {
+                Ok(milliseconds) => config.touchpad_timeout = milliseconds,
+                Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
+            },
+            (Section::Touchpad, "enabled", touchpad) => match touchpad.to_lowercase().as_ref() {
+                "yes" | "true" => config.touchpad = true,
+                "no" | "false" => config.touchpad = false,
+                _ => Err(Error::InvalidConfig(line.to_string()))?,
+            },
+            (Section::Global, "device", device_path) => {
                 config.keyboard_device = Some(device_path.to_owned())
             }
             _ => Err(Error::InvalidConfig(line.to_owned()))?,
