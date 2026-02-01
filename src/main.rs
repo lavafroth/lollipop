@@ -60,6 +60,7 @@ pub struct Touchpad {
     position: [i32; 2],
     buffer: Vec<InputEvent>,
     last_release: Option<SystemTime>,
+    fuzz: u64,
 }
 
 pub struct InternalState {
@@ -100,7 +101,7 @@ impl InternalState {
             return;
         }
 
-        if (self.touchpad.position[index] - xy).abs() > 300 {
+        if (self.touchpad.position[index] - xy).abs() as u64 > self.touchpad.fuzz {
             self.touchpad.tap_held = false;
             self.touchpad.position = [-1, -1];
         }
@@ -169,11 +170,13 @@ pub struct Config {
     clear_all_with_escape: bool,
     touchpad: bool,
     touchpad_timeout: u64,
+    touchpad_fuzz: u64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
+            touchpad_fuzz: 300,
             clear_all_with_escape: true,
             modifiers: vec![
                 KeyCode::KEY_LEFTSHIFT,
@@ -205,6 +208,10 @@ pub enum Error {
         "invalid locking timeout {0:?} supplied, must be a positive integer for the number of milliseconds"
     )]
     InvalidTimeout(String),
+    #[error(
+        "invalid fuzz threshold {0:?} supplied, must be a positive integer for the small movements acceptable during a tap"
+    )]
+    InvalidFuzz(String),
 
     #[error("invalid line in encoutered config: {0:?}")]
     InvalidConfig(String),
@@ -277,6 +284,7 @@ fn main() -> Result<(), anyhow::Error> {
             position: [-1, -1],
             buffer: vec![],
             last_release: None,
+            fuzz: config.touchpad_fuzz,
         },
     };
 
@@ -396,6 +404,10 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
         };
 
         match (section, key, value) {
+            (Section::Global, "device", "autodetect") => {}
+            (Section::Global, "device", device_path) => {
+                config.keyboard_device = Some(device_path.to_owned())
+            }
             (Section::Global, "modifiers", comma_separated_modifiers) => {
                 for modifier_str in comma_separated_modifiers.split(",") {
                     let modifier = modifier_name_to_key_code(modifier_str)
@@ -407,30 +419,31 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
                 Ok(milliseconds) => config.timeout = milliseconds,
                 Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
             },
-            (Section::Global, "device", "autodetect") => {}
-            (Section::Global, "clear_all_with_escape", clear_all_with_escape) => {
-                match clear_all_with_escape.to_lowercase().as_ref() {
-                    "yes" | "true" => config.clear_all_with_escape = true,
-                    "no" | "false" => config.clear_all_with_escape = false,
-                    _ => Err(Error::InvalidConfig(line.to_string()))?,
-                }
+            (Section::Global, "clear_all_with_escape", value) => {
+                config.clear_all_with_escape = yesnt(value, line)?
             }
+
             (Section::Touchpad, "timeout", timeout_str) => match timeout_str.parse() {
                 Ok(milliseconds) => config.touchpad_timeout = milliseconds,
                 Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
             },
-            (Section::Touchpad, "enabled", touchpad) => match touchpad.to_lowercase().as_ref() {
-                "yes" | "true" => config.touchpad = true,
-                "no" | "false" => config.touchpad = false,
-                _ => Err(Error::InvalidConfig(line.to_string()))?,
+            (Section::Touchpad, "fuzz", fuzz_str) => match fuzz_str.parse() {
+                Ok(milliseconds) => config.touchpad_fuzz = milliseconds,
+                Err(_) => Err(Error::InvalidFuzz(fuzz_str.to_owned()))?,
             },
-            (Section::Global, "device", device_path) => {
-                config.keyboard_device = Some(device_path.to_owned())
-            }
+            (Section::Touchpad, "enabled", touchpad) => config.touchpad = yesnt(touchpad, line)?,
             _ => Err(Error::InvalidConfig(line.to_owned()))?,
         }
     }
     Ok(config)
+}
+
+fn yesnt(s: &str, line: &str) -> Result<bool, Error> {
+    Ok(match s.to_lowercase().as_ref() {
+        "yes" | "true" => true,
+        "no" | "false" => false,
+        _ => Err(Error::InvalidConfig(line.to_string()))?,
+    })
 }
 
 fn modifier_name_to_key_code(s: &str) -> Option<KeyCode> {
