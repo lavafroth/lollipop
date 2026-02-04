@@ -67,21 +67,23 @@ Being an opinionated tool, all configuration settings are optional.
 Check out the example [config file](./config.ini) which shows the use of all the
 config options.
 
-### `modifiers`
+### Global options
+
+#### `modifiers`
 
 A comma-separated list of modifier keys to enable.
 
 Example: `modifiers=leftshift,leftctrl,compose`  
 Default: `modifiers=leftshift,leftctrl,compose,leftmeta,fn`
 
-### `timeout`
+#### `timeout`
 
 The admissible delay in milliseconds between the taps of a double-tap for locking a key.
 
 Example: `timeout=1000`  
 Default: `timeout=500`
 
-### `device`
+#### `device`
 
 Specifies the input device to augment. This could bee set to a `/dev/inputX` device, where X is a positive integer.
 
@@ -95,7 +97,7 @@ The default `autodetect` automatically picks the first keyboard device.
 > this option is only available to specify a keyboard when certain peripheral
 devices may get incorrectly reported as keyboards.
 
-### `clear_all_with_escape`
+#### `clear_all_with_escape`
 
 When set to `true` or `yes`, pressing the escape key clears all latched and locked keys.
 
@@ -104,3 +106,25 @@ Default:`clear_all_with_escape=true`
 
 Possible values: `true`, `yes`, `no`, `false`
 
+### Touchpad
+
+#### `enabled`
+
+Whether to enable touchpad support. All latched keys are released after a single tap on the touchpad.
+
+Useful for actions like control-click to open a link in a new tab.
+
+Example: `enabled=no`
+Default: `enabled=yes`
+
+Possible values: `true`, `yes`, `no`, `false`
+
+#### `timeout`
+
+A small delay in milliseconds between a tap and releasing latched keys.
+
+Some apps only respond to actions like control-click if the control is held for a small duration
+after the click is released.
+
+Example: `timeout=0`
+Default: `timeout=200`
