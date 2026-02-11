@@ -55,7 +55,7 @@ impl KeyState {
 }
 
 pub struct Touchpad {
-    tap_held: bool,
+    dragging: bool,
     position: [i32; 2],
     buffer: Vec<InputEvent>,
     last_release: Option<SystemTime>,
@@ -70,16 +70,18 @@ pub struct InternalState {
 }
 
 const TOUCH_RELEASED: i32 = 0;
+const TOUCH_HELD: i32 = 1;
+const COORDINATE_EMPTY: i32 = -1;
+const POSITION_EMPTY: [i32; 2] = [-1, -1];
 
 impl InternalState {
-    fn respond_touch(&mut self, this_keypress: i32) {
-        if this_keypress == 1 {
-            // println!("tapped");
-            self.touchpad.tap_held = true;
+    fn respond_touch(&mut self, touch: i32) {
+        if touch == TOUCH_HELD {
+            self.touchpad.dragging = false;
             self.touchpad.last_release = None;
         }
 
-        if self.touchpad.tap_held && this_keypress == TOUCH_RELEASED {
+        if !self.touchpad.dragging && touch == TOUCH_RELEASED {
             self.touchpad.last_release = Some(SystemTime::now());
 
             for (key, key_state) in self.modifiers.iter_mut() {
@@ -90,19 +92,21 @@ impl InternalState {
             }
         }
     }
-    fn touchpad_dragging(&mut self, index: usize, xy: i32) {
-        if !self.touchpad.tap_held {
+    fn respond_motion(&mut self, axis: usize, coordinate: i32) {
+        if self.touchpad.dragging {
             return;
         }
 
-        if self.touchpad.position[index] == -1 {
-            self.touchpad.position[index] = xy;
+        if self.touchpad.position[axis] == COORDINATE_EMPTY {
+            self.touchpad.position[axis] = coordinate;
             return;
         }
 
-        if (self.touchpad.position[index] - xy).abs() as u64 > self.touchpad.fuzz {
-            self.touchpad.tap_held = false;
-            self.touchpad.position = [-1, -1];
+        // if the cursor is pushed beyond a `fuzz` sided square
+        // in the touchpad, it is getting dragged
+        if (self.touchpad.position[axis] - coordinate).abs() as u64 > self.touchpad.fuzz {
+            self.touchpad.dragging = true;
+            self.touchpad.position = POSITION_EMPTY;
         }
     }
     fn transition(&mut self, key: KeyCode, pressed: i32, timestamp: SystemTime) -> Vec<InputEvent> {
@@ -276,7 +280,7 @@ async fn main() -> Result<(), anyhow::Error> {
         modifiers: BTreeMap::default(),
         timeout: Duration::from_millis(config.timeout),
         touchpad: Touchpad {
-            tap_held: false,
+            dragging: false,
             position: [-1, -1],
             buffer: vec![],
             last_release: None,
@@ -319,7 +323,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
                 }
                 if let evdev::EventSummary::AbsoluteAxis(_touchpad_event, AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {
-                    state.touchpad_dragging(event.code() as usize, xy)
+                    state.respond_motion(event.code() as usize, xy)
                 }
             }
         };
