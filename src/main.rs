@@ -1,9 +1,8 @@
-use evdev::{AbsoluteAxisCode, Device, InputEvent, KeyEvent, LedCode, LedEvent};
-use nix::sys::epoll;
+use evdev::{AbsoluteAxisCode, Device, EventStream, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::fs;
 use std::time::{Duration, SystemTime};
+use std::{fs, io};
 
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, KeyCode};
@@ -233,14 +232,18 @@ fn open_device(path: &str) -> Result<(Device, Device), Error> {
     ))
 }
 
-fn main() -> Result<(), anyhow::Error> {
+async fn handle_touchpad(
+    touchpad_events: Option<&mut EventStream>,
+) -> Option<io::Result<InputEvent>> {
+    Some(touchpad_events?.next_event().await)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), anyhow::Error> {
     let config = match std::env::args().nth(1) {
         Some(config_file) => parse_config(&config_file)?,
         None => Config::default(),
     };
-
-    let epoll = epoll::Epoll::new(epoll::EpollCreateFlags::EPOLL_CLOEXEC)?;
-    let event = epoll::EpollEvent::new(epoll::EpollFlags::EPOLLIN, 0);
 
     let (mut keyboard, mut led_sink) = if let Some(device_path) = config.keyboard_device {
         open_device(&device_path)?
@@ -248,15 +251,8 @@ fn main() -> Result<(), anyhow::Error> {
         (pick_device()?, pick_device()?)
     };
 
-    keyboard.set_nonblocking(true)?;
-    epoll.add(&keyboard, event)?;
-
-    let mut touchpad = if config.touchpad {
-        let touchpad = pick_touchpad()?;
-        touchpad.set_nonblocking(true)?;
-        let touchpad_epoll_event = epoll::EpollEvent::new(epoll::EpollFlags::EPOLLIN, 0);
-        epoll.add(&touchpad, touchpad_epoll_event)?;
-        Some(touchpad)
+    let mut touchpad_events = if config.touchpad {
+        Some(pick_touchpad()?.into_event_stream()?)
     } else {
         None
     };
@@ -294,6 +290,8 @@ fn main() -> Result<(), anyhow::Error> {
 
     let touchpad_timeout = Duration::from_millis(config.touchpad_timeout);
 
+    let mut keyboard_events = keyboard.into_event_stream()?;
+
     loop {
         if state
             .touchpad
@@ -304,61 +302,27 @@ fn main() -> Result<(), anyhow::Error> {
             lollipop_virtual_device.emit(&state.touchpad.buffer)?;
             state.touchpad.buffer.clear();
         }
-        match keyboard.fetch_events() {
-            Ok(iterator) => {
-                for event in iterator {
-                    if let evdev::EventSummary::Key(key_event, key_code, pressed) =
-                        event.destructure()
-                    {
-                        let events = state.transition(key_code, pressed, key_event.timestamp());
-                        // println!("{state:#?}");
-                        lollipop_virtual_device.emit(&events)?;
-                        led_sink.send_events(&[*LedEvent::new(
-                            LedCode::LED_CAPSL,
-                            state.led_state(),
-                        )])?;
-                    }
+        tokio::select! {
+            Ok(event) = keyboard_events.next_event() => {
+                if let evdev::EventSummary::Key(key_event, key_code, pressed) = event.destructure() {
+                    let events = state.transition(key_code, pressed, key_event.timestamp());
+                    // println!("{state:#?}");
+                    lollipop_virtual_device.emit(&events)?;
+                    led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(e) => {
-                eprintln!("{e}");
-                // break;
-            }
-        }
-        if let Some(touchpad) = touchpad.as_mut() {
-            match touchpad.fetch_events() {
-                Ok(iterator) => {
-                    for event in iterator {
-                        if let evdev::EventSummary::Key(
-                            _key_event,
-                            KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH,
-                            pressed,
-                        ) = event.destructure()
-                        {
-                            state.respond_touch(pressed);
-                            led_sink.send_events(&[*LedEvent::new(
-                                LedCode::LED_CAPSL,
-                                state.led_state(),
-                            )])?;
-                        }
-                        if let evdev::EventSummary::AbsoluteAxis(
-                            _touchpad_event,
-                            AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y,
-                            xy,
-                        ) = event.destructure()
-                        {
-                            state.touchpad_dragging(event.code() as usize, xy)
-                        }
-                    }
+
+            Some(Ok(event)) = handle_touchpad(touchpad_events.as_mut()) => {
+
+                if let evdev::EventSummary::Key(_key_event, KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
+                    state.respond_touch(pressed);
+                    led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(e) => {
-                    eprintln!("{e}");
-                    // break;
+                if let evdev::EventSummary::AbsoluteAxis(_touchpad_event, AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {
+                    state.touchpad_dragging(event.code() as usize, xy)
                 }
             }
-        }
+        };
     }
 }
 
