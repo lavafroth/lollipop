@@ -57,6 +57,7 @@ impl KeyState {
 pub struct Touchpad {
     dragging: bool,
     position: [i32; 2],
+    timeout: Duration,
     buffer: Vec<InputEvent>,
     last_release: Option<SystemTime>,
     fuzz: u64,
@@ -75,6 +76,13 @@ const COORDINATE_EMPTY: i32 = -1;
 const POSITION_EMPTY: [i32; 2] = [-1, -1];
 
 impl InternalState {
+    fn can_release_keys_after_touchpad(&self) -> bool {
+        self.touchpad
+            .last_release
+            .and_then(|v| v.elapsed().ok())
+            .is_some_and(|v| v > self.touchpad.timeout)
+    }
+
     fn release_latched(&mut self) -> Vec<InputEvent> {
         let mut events = vec![];
         for (key, key_state) in self.modifiers.iter_mut() {
@@ -269,8 +277,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .build()?;
 
     for path in lollipop_virtual_device.enumerate_dev_nodes_blocking()? {
-        let path = path?;
-        println!("Available as {}", path.display());
+        println!("Available as {}", path?.display());
     }
 
     let mut state = InternalState {
@@ -278,8 +285,9 @@ async fn main() -> Result<(), anyhow::Error> {
         modifiers: BTreeMap::default(),
         timeout: Duration::from_millis(config.timeout),
         touchpad: Touchpad {
+            timeout: Duration::from_millis(config.touchpad_timeout),
             dragging: false,
-            position: [-1, -1],
+            position: POSITION_EMPTY,
             buffer: vec![],
             last_release: None,
             fuzz: config.touchpad_fuzz,
@@ -290,20 +298,14 @@ async fn main() -> Result<(), anyhow::Error> {
         state.modifiers.insert(key, KeyState::None);
     }
 
-    let touchpad_timeout = Duration::from_millis(config.touchpad_timeout);
-
     let mut keyboard_events = keyboard.into_event_stream()?;
 
     loop {
-        if state
-            .touchpad
-            .last_release
-            .and_then(|v| v.elapsed().ok())
-            .is_some_and(|v| v > touchpad_timeout)
-        {
+        if state.can_release_keys_after_touchpad() {
             lollipop_virtual_device.emit(&state.touchpad.buffer)?;
             state.touchpad.buffer.clear();
         }
+
         tokio::select! {
             Ok(event) = keyboard_events.next_event() => {
                 if let evdev::EventSummary::Key(key_event, key_code, pressed) = event.destructure() {
@@ -316,15 +318,17 @@ async fn main() -> Result<(), anyhow::Error> {
 
             Some(Ok(event)) = handle_touchpad(touchpad_events.as_mut()) => {
 
-                if let evdev::EventSummary::Key(_key_event, KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
+                if let evdev::EventSummary::Key(_key_event,
+                    KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
                     state.respond_touch(pressed);
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
                 }
-                if let evdev::EventSummary::AbsoluteAxis(_touchpad_event, AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {
+                if let evdev::EventSummary::AbsoluteAxis(_touchpad_event,
+                    AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {
                     state.respond_motion(event.code() as usize, xy)
                 }
             }
-        };
+        }
     }
 }
 
