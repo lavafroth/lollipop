@@ -75,6 +75,16 @@ const COORDINATE_EMPTY: i32 = -1;
 const POSITION_EMPTY: [i32; 2] = [-1, -1];
 
 impl InternalState {
+    fn release_latched(&mut self) -> Vec<InputEvent> {
+        let mut events = vec![];
+        for (key, key_state) in self.modifiers.iter_mut() {
+            if let KeyState::Latched(_) = key_state {
+                *key_state = KeyState::None;
+                events.push(*KeyEvent::new(*key, 0));
+            }
+        }
+        events
+    }
     fn respond_touch(&mut self, touch: i32) {
         if touch == TOUCH_HELD {
             self.touchpad.dragging = false;
@@ -83,13 +93,7 @@ impl InternalState {
 
         if !self.touchpad.dragging && touch == TOUCH_RELEASED {
             self.touchpad.last_release = Some(SystemTime::now());
-
-            for (key, key_state) in self.modifiers.iter_mut() {
-                if !KeyState::None.eq(key_state) {
-                    *key_state = KeyState::None;
-                    self.touchpad.buffer.push(*KeyEvent::new(*key, 0));
-                }
-            }
+            self.touchpad.buffer = self.release_latched();
         }
     }
     fn respond_motion(&mut self, axis: usize, coordinate: i32) {
@@ -110,15 +114,15 @@ impl InternalState {
         }
     }
     fn transition(&mut self, key: KeyCode, pressed: i32, timestamp: SystemTime) -> Vec<InputEvent> {
+        let mut events = vec![];
+
         if self.clear_all_with_escape && key == KeyCode::KEY_ESC {
-            let mut events = vec![];
             for (key, key_state) in self.modifiers.iter_mut() {
                 if !KeyState::None.eq(key_state) {
                     *key_state = KeyState::None;
                     events.push(*KeyEvent::new(*key, 0));
                 }
             }
-
             return events;
         }
 
@@ -129,14 +133,8 @@ impl InternalState {
             return vec![*KeyEvent::new(key, key_state.pressed_state())];
         };
 
-        let mut events = vec![*KeyEvent::new(key, pressed)];
-        for (key, key_state) in self.modifiers.iter_mut() {
-            if let KeyState::Latched(_) = key_state {
-                *key_state = KeyState::None;
-                events.push(*KeyEvent::new(*key, 0));
-            }
-        }
-
+        events.push(*KeyEvent::new(key, pressed));
+        events.extend_from_slice(&self.release_latched());
         events
     }
 
