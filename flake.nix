@@ -38,23 +38,33 @@
             enable = lib.mkEnableOption "Lollipop sticky keys service";
             timeout = lib.mkOption {
               type = lib.types.int;
-              description = "timeout";
+              description = "lock a key if pressed twice within this time window";
               default = 500;
             };
             modifiers = lib.mkOption {
               type = lib.types.str;
-              description = "modifiers";
+              description = "the modifiers to register and augment";
               default = "leftshift,leftctrl,compose,leftmeta,fn";
             };
             device = lib.mkOption {
               type = lib.types.str;
-              description = "device";
+              description = "the keyboard device to listen on";
               default = "autodetect";
             };
             clearAllWithEscape = lib.mkOption {
               type = lib.types.bool;
               description = "clear all latched and locked keys by pressing escape";
               default = true;
+            };
+            touchpad.enable = lib.mkOption {
+              type = lib.types.bool;
+              description = "clear latched and locked keys when touchpad is clicked";
+              default = true;
+            };
+            touchpad.timeout = lib.mkOption {
+              type = lib.types.int;
+              description = "how long a touchpad can dwell in the touched state before considering the input as a click";
+              default = 400;
             };
           };
 
@@ -67,12 +77,18 @@
 
                 ExecStart = "${self.packages.${pkgs.system}.default}/bin/lollipop ${
                   let configContents = lib.generators.toINIWithGlobalSection { } {
+
                     globalSection = {
                       timeout = cfg.timeout;
                       modifiers = cfg.modifiers;
                       device = cfg.device;
                       clear_all_with_escape = cfg.clearAllWithEscape;
                     };
+
+                      sections = {
+                        touchpad = cfg.touchpad;
+                      };
+
                   }; in
                   pkgs.writeText "config.ini" configContents
                 }";
