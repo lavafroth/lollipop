@@ -401,7 +401,7 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
                 Ok(milliseconds) => config.touchpad_fuzz = milliseconds,
                 Err(_) => Err(Error::InvalidFuzz(fuzz_str.to_owned()))?,
             },
-            (Section::Touchpad, "enabled", touchpad) => config.touchpad = yesnt(touchpad, line)?,
+            (Section::Touchpad, "enable", touchpad) => config.touchpad = yesnt(touchpad, line)?,
             _ => Err(Error::InvalidConfig(line.to_owned()))?,
         }
     }
