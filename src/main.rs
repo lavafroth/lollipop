@@ -1,9 +1,9 @@
 use evdev::{AbsoluteAxisCode, Device, EventStream, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
-use tokio::time::Instant;
+mod touchpad;
 
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, KeyCode};
@@ -55,55 +55,12 @@ impl KeyState {
     }
 }
 
-pub struct Touchpad {
-    state: TouchState,
-    position: [i32; 2],
-    timeout: Duration,
-    fuzz: u64,
-}
-
-#[derive(PartialEq, Eq)]
-pub enum TouchState {
-    Idle,
-    Pending(Instant),
-    DoubleTap,
-    Swipe,
-}
-
-impl Display for TouchState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TouchState::Idle => write!(f, "Idle"),
-            TouchState::Pending(_time) => write!(f, "Pending"),
-            TouchState::DoubleTap => write!(f, "DoubleTap"),
-            TouchState::Swipe => write!(f, "Swipe"),
-        }
-    }
-}
-
-impl Touchpad {
-    async fn timeout(&self) {
-        if let TouchState::Pending(time) = self.state {
-            let deadline = time + self.timeout;
-            tokio::time::sleep_until(deadline).await;
-        } else {
-            std::future::pending::<()>().await;
-        }
-    }
-}
-
 pub struct InternalState {
     modifiers: BTreeMap<KeyCode, KeyState>,
     timeout: Duration,
     clear_all_with_escape: bool,
-    touchpad: Touchpad,
+    touchpad: touchpad::Touchpad,
 }
-
-const TOUCH_RELEASED: i32 = 0;
-const TOUCH_HELD: i32 = 1;
-const COORDINATE_EMPTY: i32 = -1;
-const POSITION_EMPTY: [i32; 2] = [-1, -1];
-
 impl InternalState {
     fn release_latched(&mut self) -> Vec<InputEvent> {
         let mut events = vec![];
@@ -113,47 +70,8 @@ impl InternalState {
                 events.push(*KeyEvent::new(*key, 0));
             }
         }
-        self.touchpad.state = TouchState::Idle;
+        self.touchpad.state = touchpad::TouchState::Idle;
         events
-    }
-    fn respond_touch(&mut self, touch: i32) {
-        if touch == TOUCH_HELD {
-            match self.touchpad.state {
-                TouchState::Pending(_) => self.touchpad.state = TouchState::DoubleTap,
-                _ => {}
-            }
-        }
-
-        if touch == TOUCH_RELEASED {
-            self.touchpad.state = match self.touchpad.state {
-                //  After a double tap, whether the cursor was being dragged or not, it's time to release the latched keys.
-                TouchState::Idle | TouchState::Pending(_) | TouchState::DoubleTap => {
-                    TouchState::Pending(Instant::now())
-                }
-
-                // the cursor was being moved, do nothing
-                TouchState::Swipe => TouchState::Idle,
-            };
-            self.touchpad.position = POSITION_EMPTY;
-        }
-        // eprint!("{} ", self.touchpad.state);
-    }
-    fn respond_motion(&mut self, axis: usize, coordinate: i32) {
-        if matches!(self.touchpad.state, TouchState::Swipe) {
-            return;
-        }
-
-        if self.touchpad.position[axis] == COORDINATE_EMPTY {
-            self.touchpad.position[axis] = coordinate;
-            return;
-        }
-
-        let cursor_dragged_beyond_threshold_square =
-            (self.touchpad.position[axis] - coordinate).abs() as u64 > self.touchpad.fuzz;
-        if cursor_dragged_beyond_threshold_square && self.touchpad.state == TouchState::Idle {
-            self.touchpad.state = TouchState::Swipe;
-        }
-        // eprint!("{} ", self.touchpad.state);
     }
     fn transition(&mut self, key: KeyCode, pressed: i32, timestamp: SystemTime) -> Vec<InputEvent> {
         let mut events = vec![];
@@ -318,11 +236,11 @@ async fn main() -> Result<(), anyhow::Error> {
         clear_all_with_escape: config.clear_all_with_escape,
         modifiers: BTreeMap::default(),
         timeout: Duration::from_millis(config.timeout),
-        touchpad: Touchpad {
+        touchpad: touchpad::Touchpad {
             timeout: Duration::from_millis(config.touchpad_timeout),
-            position: POSITION_EMPTY,
+            position: touchpad::POSITION_EMPTY,
             fuzz: config.touchpad_fuzz,
-            state: TouchState::Idle,
+            state: touchpad::TouchState::Idle,
         },
     };
 
@@ -353,12 +271,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
                 if let evdev::EventSummary::Key(_key_event,
                     KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
-                    state.respond_touch(pressed);
+                    state.touchpad.respond_touch(pressed);
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
                 }
                 if let evdev::EventSummary::AbsoluteAxis(_touchpad_event,
                     AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {
-                    state.respond_motion(event.code() as usize, xy)
+                    state.touchpad.respond_motion(event.code() as usize, xy)
                 }
             }
         }
