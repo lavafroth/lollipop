@@ -131,13 +131,13 @@ pub struct Config {
     clear_all_with_escape: bool,
     touchpad: bool,
     touchpad_timeout: u64,
-    touchpad_fuzz: u64,
+    touchpad_slop: u64,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            touchpad_fuzz: 50,
+            touchpad_slop: 50,
             clear_all_with_escape: true,
             modifiers: vec![
                 KeyCode::KEY_LEFTSHIFT,
@@ -170,9 +170,9 @@ pub enum Error {
     )]
     InvalidTimeout(String),
     #[error(
-        "invalid fuzz threshold {0:?} supplied, must be a positive integer for the small movements acceptable during a tap"
+        "invalid slop threshold {0:?} supplied, must be a positive integer for the small movements acceptable during a tap"
     )]
-    InvalidFuzz(String),
+    InvalidSlop(String),
 
     #[error("invalid line in encoutered config: {0:?}")]
     InvalidConfig(String),
@@ -239,7 +239,7 @@ async fn main() -> Result<(), anyhow::Error> {
         touchpad: touchpad::Touchpad {
             timeout: Duration::from_millis(config.touchpad_timeout),
             position: touchpad::POSITION_EMPTY,
-            fuzz: config.touchpad_fuzz,
+            slop: config.touchpad_slop,
             state: touchpad::TouchState::Idle,
         },
     };
@@ -348,9 +348,9 @@ fn parse_config(config_path: &str) -> Result<Config, Error> {
                 Ok(milliseconds) => config.touchpad_timeout = milliseconds,
                 Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
             },
-            (Section::Touchpad, "fuzz", fuzz_str) => match fuzz_str.parse() {
-                Ok(milliseconds) => config.touchpad_fuzz = milliseconds,
-                Err(_) => Err(Error::InvalidFuzz(fuzz_str.to_owned()))?,
+            (Section::Touchpad, "slop", fuzz_str) => match fuzz_str.parse() {
+                Ok(milliseconds) => config.touchpad_slop = milliseconds,
+                Err(_) => Err(Error::InvalidSlop(fuzz_str.to_owned()))?,
             },
             (Section::Touchpad, "enable", touchpad) => config.touchpad = yesnt(touchpad, line)?,
             _ => Err(Error::InvalidConfig(line.to_owned()))?,

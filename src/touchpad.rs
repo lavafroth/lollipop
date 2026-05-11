@@ -8,7 +8,7 @@ pub struct Touchpad {
     pub state: TouchState,
     pub position: [i32; 2],
     pub timeout: Duration,
-    pub fuzz: u64,
+    pub slop: u64,
 }
 
 #[derive(PartialEq, Eq)]
@@ -80,7 +80,7 @@ impl Touchpad {
         }
 
         let cursor_dragged_beyond_threshold_square =
-            (self.position[axis] - coordinate).abs() as u64 > self.fuzz;
+            (self.position[axis] - coordinate).abs() as u64 > self.slop;
         if cursor_dragged_beyond_threshold_square && self.state == TouchState::Idle {
             self.state = TouchState::Swipe;
         }
