@@ -66,6 +66,11 @@
               description = "how long a touchpad can dwell in the touched state before considering the input as a click";
               default = 400;
             };
+            touchpad.slop = lib.mkOption {
+              type = lib.types.int;
+              description = "register a touch as a tap even if the finger moves slightly by this amount of touchpad units";
+              default = 50;
+            };
           };
 
           config = lib.mkIf cfg.enable {
