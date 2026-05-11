@@ -1,8 +1,9 @@
 use evdev::{AbsoluteAxisCode, Device, EventStream, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
+use tokio::time::Instant;
 
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, KeyCode};
@@ -55,12 +56,49 @@ impl KeyState {
 }
 
 pub struct Touchpad {
-    dragging: bool,
+    state: TouchState,
     position: [i32; 2],
     timeout: Duration,
-    buffer: Vec<InputEvent>,
-    last_release: Option<SystemTime>,
     fuzz: u64,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum TouchState {
+    Idle,
+    Pending(SystemTime),
+    DoubleTapDragging,
+    DoubleTap,
+    Swipe,
+}
+
+impl Display for TouchState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TouchState::Idle => write!(f, "Idle"),
+            TouchState::Pending(_system_time) => write!(f, "Pending"),
+            TouchState::DoubleTapDragging => write!(f, "DoubleTapDragging"),
+            TouchState::DoubleTap => write!(f, "DoubleTap"),
+            TouchState::Swipe => write!(f, "Swipe"),
+        }
+    }
+}
+fn system_time_to_tokio_instant(target_time: SystemTime) -> Instant {
+    let now_system = SystemTime::now();
+
+    match target_time.duration_since(now_system) {
+        Ok(duration) => Instant::now() + duration,
+        Err(_) => Instant::now(),
+    }
+}
+impl Touchpad {
+    async fn timeout(&self) {
+        if let TouchState::Pending(time) = self.state {
+            let deadline = time + self.timeout;
+            tokio::time::sleep_until(system_time_to_tokio_instant(deadline)).await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
 pub struct InternalState {
@@ -76,13 +114,6 @@ const COORDINATE_EMPTY: i32 = -1;
 const POSITION_EMPTY: [i32; 2] = [-1, -1];
 
 impl InternalState {
-    fn can_release_keys_after_touchpad(&self) -> bool {
-        self.touchpad
-            .last_release
-            .and_then(|v| v.elapsed().ok())
-            .is_some_and(|v| v > self.touchpad.timeout)
-    }
-
     fn release_latched(&mut self) -> Vec<InputEvent> {
         let mut events = vec![];
         for (key, key_state) in self.modifiers.iter_mut() {
@@ -91,21 +122,38 @@ impl InternalState {
                 events.push(*KeyEvent::new(*key, 0));
             }
         }
+        self.touchpad.state = TouchState::Idle;
         events
     }
     fn respond_touch(&mut self, touch: i32) {
         if touch == TOUCH_HELD {
-            self.touchpad.dragging = false;
-            self.touchpad.last_release = None;
+            match self.touchpad.state {
+                TouchState::Pending(_) => self.touchpad.state = TouchState::DoubleTap,
+                _ => {}
+            }
         }
 
-        if !self.touchpad.dragging && touch == TOUCH_RELEASED {
-            self.touchpad.last_release = Some(SystemTime::now());
-            self.touchpad.buffer = self.release_latched();
+        if touch == TOUCH_RELEASED {
+            match self.touchpad.state {
+                TouchState::Idle
+                | TouchState::Pending(_)
+                | TouchState::DoubleTapDragging
+                | TouchState::DoubleTap => {
+                    self.touchpad.state = TouchState::Pending(SystemTime::now());
+                }
+                TouchState::Swipe => {
+                    self.touchpad.state = TouchState::Idle;
+                    // the cursor was being moved, do nothing
+                }
+            }
         }
+        // eprint!("{} ", self.touchpad.state);
     }
     fn respond_motion(&mut self, axis: usize, coordinate: i32) {
-        if self.touchpad.dragging {
+        if matches!(
+            self.touchpad.state,
+            TouchState::DoubleTapDragging | TouchState::Swipe
+        ) {
             return;
         }
 
@@ -116,9 +164,21 @@ impl InternalState {
 
         // if the cursor is pushed beyond a `fuzz` sided square
         // in the touchpad, it is getting dragged
-        if (self.touchpad.position[axis] - coordinate).abs() as u64 > self.touchpad.fuzz {
-            self.touchpad.dragging = true;
-            self.touchpad.position = POSITION_EMPTY;
+        let cursor_dragged_beyond_threshold =
+            (self.touchpad.position[axis] - coordinate).abs() as u64 > self.touchpad.fuzz;
+        if cursor_dragged_beyond_threshold {
+            match self.touchpad.state {
+                TouchState::Idle => {
+                    self.touchpad.state = TouchState::Swipe;
+                    self.touchpad.position = POSITION_EMPTY;
+                }
+                TouchState::DoubleTap => {
+                    self.touchpad.state = TouchState::DoubleTapDragging;
+                    self.touchpad.position = POSITION_EMPTY;
+                }
+                _ => {}
+            }
+            // eprint!("{} ", self.touchpad.state);
         }
     }
     fn transition(&mut self, key: KeyCode, pressed: i32, timestamp: SystemTime) -> Vec<InputEvent> {
@@ -286,11 +346,9 @@ async fn main() -> Result<(), anyhow::Error> {
         timeout: Duration::from_millis(config.timeout),
         touchpad: Touchpad {
             timeout: Duration::from_millis(config.touchpad_timeout),
-            dragging: false,
             position: POSITION_EMPTY,
-            buffer: vec![],
-            last_release: None,
             fuzz: config.touchpad_fuzz,
+            state: TouchState::Idle,
         },
     };
 
@@ -301,12 +359,13 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut keyboard_events = keyboard.into_event_stream()?;
 
     loop {
-        if state.can_release_keys_after_touchpad() {
-            lollipop_virtual_device.emit(&state.touchpad.buffer)?;
-            state.touchpad.buffer.clear();
-        }
-
         tokio::select! {
+            _ = state.touchpad.timeout() => {
+                // eprintln!("timed out");
+                lollipop_virtual_device.emit(&state.release_latched())?;
+                led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+            }
+
             Ok(event) = keyboard_events.next_event() => {
                 if let evdev::EventSummary::Key(key_event, key_code, pressed) = event.destructure() {
                     let events = state.transition(key_code, pressed, key_event.timestamp());
