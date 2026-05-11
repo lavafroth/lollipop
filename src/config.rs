@@ -9,18 +9,20 @@ enum Section {
 }
 
 pub struct Config {
-    pub(crate) modifiers: Vec<KeyCode>,
-    pub(crate) timeout: u64,
-    pub(crate) keyboard_device: Option<String>,
-    pub(crate) clear_all_with_escape: bool,
-    pub(crate) touchpad: bool,
-    pub(crate) touchpad_timeout: u64,
-    pub(crate) touchpad_slop: u64,
+    pub modifiers: Vec<KeyCode>,
+    pub timeout: u64,
+    pub keyboard_device: Option<String>,
+    pub clear_all_with_escape: bool,
+    pub touchpad: bool,
+    pub touchpad_timeout: u64,
+    pub touchpad_slop: u64,
+    pub shm: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
+            shm: false,
             touchpad_slop: 50,
             clear_all_with_escape: true,
             modifiers: vec![
@@ -90,6 +92,9 @@ impl Config {
                 },
                 (Section::Global, "clear_all_with_escape", value) => {
                     config.clear_all_with_escape = yesnt(value, line)?
+                }
+                (Section::Global, "shared_memory", value) => {
+                    config.shm = yesnt(value, line)?;
                 }
 
                 (Section::Touchpad, "timeout", timeout_str) => match timeout_str.parse() {

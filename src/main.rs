@@ -194,11 +194,23 @@ async fn handle_touchpad(
     Some(touchpad_events?.next_event().await)
 }
 
-fn write_to_shm(shared_memory: &mut File, string: &str) -> io::Result<()> {
-    shared_memory.set_len(0)?;
-    shared_memory.seek(io::SeekFrom::Start(0))?;
-    shared_memory.write_all(string.as_bytes())?;
-    Ok(())
+pub enum MaybeSharedMemory {
+    Some(File),
+    None,
+}
+
+impl MaybeSharedMemory {
+    fn write_to_shm(&mut self, string: &str) -> io::Result<()> {
+        match self {
+            MaybeSharedMemory::Some(shared_memory) => {
+                shared_memory.set_len(0)?;
+                shared_memory.seek(io::SeekFrom::Start(0))?;
+                shared_memory.write_all(string.as_bytes())?;
+            }
+            MaybeSharedMemory::None => {}
+        }
+        Ok(())
+    }
 }
 
 #[tokio::main]
@@ -238,11 +250,17 @@ async fn main() -> Result<(), anyhow::Error> {
         std::fs::remove_file(&shared_memory_path)?;
     }
 
-    let mut shared_memory = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .mode(0o644)
-        .open(shared_memory_path)?;
+    let mut shared_memory = if config.shm {
+        MaybeSharedMemory::Some(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .mode(0o644)
+                .open(shared_memory_path)?,
+        )
+    } else {
+        MaybeSharedMemory::None
+    };
 
     let mut state = InternalState {
         clear_all_with_escape: config.clear_all_with_escape,
@@ -267,7 +285,7 @@ async fn main() -> Result<(), anyhow::Error> {
             _ = state.touchpad.timeout() => {
                 lollipop_virtual_device.emit(&state.release_latched())?;
                 led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
-                write_to_shm(&mut shared_memory, &state.to_string())?;
+                shared_memory.write_to_shm(&state.to_string())?;
             }
 
             Ok(event) = keyboard_events.next_event() => {
@@ -276,7 +294,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     // println!("{state:#?}");
                     lollipop_virtual_device.emit(&events)?;
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
-                    write_to_shm(&mut shared_memory, &state.to_string())?;
+                    shared_memory.write_to_shm(&state.to_string())?;
                 }
             }
 
@@ -286,7 +304,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
                     state.touchpad.respond_touch(pressed);
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
-                    write_to_shm(&mut shared_memory, &state.to_string())?;
+                    shared_memory.write_to_shm(&state.to_string())?;
                 }
                 if let evdev::EventSummary::AbsoluteAxis(_touchpad_event,
                     AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {
