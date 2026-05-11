@@ -127,6 +127,7 @@ fn modifier_name_to_key_code(s: &str) -> Option<KeyCode> {
         "fn" => KeyCode::KEY_FN,
         "capslock" => KeyCode::KEY_CAPSLOCK,
         "rightmeta" => KeyCode::KEY_RIGHTMETA,
+        "leftalt" => KeyCode::KEY_LEFTALT,
         _ => return None,
     };
     Some(ret)
@@ -142,6 +143,7 @@ pub fn key_code_to_modifier_name(s: KeyCode) -> Option<&'static str> {
         KeyCode::KEY_FN => "fn",
         KeyCode::KEY_CAPSLOCK => "capslock",
         KeyCode::KEY_RIGHTMETA => "rightmeta",
+        KeyCode::KEY_LEFTALT => "leftalt",
         _ => return None,
     };
     Some(ret)
