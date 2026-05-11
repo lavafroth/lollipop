@@ -76,7 +76,7 @@ impl Display for InternalState {
 
             match state {
                 KeyState::Latched(_system_time) => write!(f, "{key_name} ")?,
-                KeyState::Locked => write!(f, "[{key_name}] ")?,
+                KeyState::Locked => write!(f, "<b>{key_name}</b> ")?,
                 _ => {}
             }
         }
