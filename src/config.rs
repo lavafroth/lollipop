@@ -127,6 +127,7 @@ fn modifier_name_to_key_code(s: &str) -> Option<KeyCode> {
         "fn" => KeyCode::KEY_FN,
         "capslock" => KeyCode::KEY_CAPSLOCK,
         "rightmeta" => KeyCode::KEY_RIGHTMETA,
+        "leftalt" => KeyCode::KEY_LEFTALT,
         _ => return None,
     };
     Some(ret)
