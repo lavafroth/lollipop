@@ -96,9 +96,9 @@ impl Config {
                     Ok(milliseconds) => config.touchpad_timeout = milliseconds,
                     Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
                 },
-                (Section::Touchpad, "slop", fuzz_str) => match fuzz_str.parse() {
-                    Ok(milliseconds) => config.touchpad_slop = milliseconds,
-                    Err(_) => Err(Error::InvalidSlop(fuzz_str.to_owned()))?,
+                (Section::Touchpad, "slop", slop_str) => match slop_str.parse() {
+                    Ok(slop) => config.touchpad_slop = slop,
+                    Err(_) => Err(Error::InvalidSlop(slop_str.to_owned()))?,
                 },
                 (Section::Touchpad, "enable", touchpad) => config.touchpad = yesnt(touchpad, line)?,
                 _ => Err(Error::InvalidConfig(line.to_owned()))?,
