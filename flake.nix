@@ -56,6 +56,11 @@
               description = "clear all latched and locked keys by pressing escape";
               default = true;
             };
+            sharedMemory = lib.mkOption {
+              type = lib.types.bool;
+              description = "write to a file in /dev/shm to be watched by on screen indicators";
+              default = false;
+            };
             touchpad.enable = lib.mkOption {
               type = lib.types.bool;
               description = "clear latched and locked keys when touchpad is clicked";
@@ -88,6 +93,7 @@
                       modifiers = cfg.modifiers;
                       device = cfg.device;
                       clear_all_with_escape = cfg.clearAllWithEscape;
+                      shared_memory = cfg.sharedMemory;
                     };
 
                       sections = {
