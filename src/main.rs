@@ -1,12 +1,17 @@
 use evdev::{AbsoluteAxisCode, Device, EventStream, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
-use std::fmt::Debug;
-use std::io;
+use std::fmt::{Debug, Display};
+use std::fs::{File, OpenOptions};
+use std::io::{self, Seek, Write};
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 mod config;
 mod touchpad;
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, KeyCode};
+
+use crate::config::key_code_to_modifier_name;
 mod key_codes;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -61,6 +66,24 @@ pub struct InternalState {
     clear_all_with_escape: bool,
     touchpad: touchpad::Touchpad,
 }
+
+impl Display for InternalState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (keycode, state) in self.modifiers.iter() {
+            let Some(key_name) = key_code_to_modifier_name(*keycode) else {
+                continue;
+            };
+
+            match state {
+                KeyState::Latched(_system_time) => write!(f, "{key_name} ")?,
+                KeyState::Locked => write!(f, "[{key_name}] ")?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 impl InternalState {
     fn release_latched(&mut self) -> Vec<InputEvent> {
         let mut events = vec![];
@@ -171,6 +194,13 @@ async fn handle_touchpad(
     Some(touchpad_events?.next_event().await)
 }
 
+fn write_to_shm(shared_memory: &mut File, string: &str) -> io::Result<()> {
+    shared_memory.set_len(0)?;
+    shared_memory.seek(io::SeekFrom::Start(0))?;
+    shared_memory.write_all(string.as_bytes())?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let config = match std::env::args().nth(1) {
@@ -203,6 +233,17 @@ async fn main() -> Result<(), anyhow::Error> {
         println!("Available as {}", path?.display());
     }
 
+    let shared_memory_path = PathBuf::from("/dev/shm/lollipop.shm");
+    if shared_memory_path.exists() {
+        std::fs::remove_file(&shared_memory_path)?;
+    }
+
+    let mut shared_memory = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .mode(0o644)
+        .open(shared_memory_path)?;
+
     let mut state = InternalState {
         clear_all_with_escape: config.clear_all_with_escape,
         modifiers: BTreeMap::default(),
@@ -226,6 +267,7 @@ async fn main() -> Result<(), anyhow::Error> {
             _ = state.touchpad.timeout() => {
                 lollipop_virtual_device.emit(&state.release_latched())?;
                 led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+                write_to_shm(&mut shared_memory, &state.to_string())?;
             }
 
             Ok(event) = keyboard_events.next_event() => {
@@ -234,6 +276,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     // println!("{state:#?}");
                     lollipop_virtual_device.emit(&events)?;
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+                    write_to_shm(&mut shared_memory, &state.to_string())?;
                 }
             }
 
@@ -243,6 +286,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     KeyCode::BTN_LEFT | KeyCode::BTN_RIGHT | KeyCode::BTN_TOUCH, pressed) = event.destructure() {
                     state.touchpad.respond_touch(pressed);
                     led_sink.send_events(&[*LedEvent::new(LedCode::LED_CAPSL, state.led_state())])?;
+                    write_to_shm(&mut shared_memory, &state.to_string())?;
                 }
                 if let evdev::EventSummary::AbsoluteAxis(_touchpad_event,
                     AbsoluteAxisCode::ABS_X | AbsoluteAxisCode::ABS_Y, xy) = event.destructure() {

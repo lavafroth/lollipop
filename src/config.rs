@@ -131,3 +131,18 @@ fn modifier_name_to_key_code(s: &str) -> Option<KeyCode> {
     };
     Some(ret)
 }
+pub fn key_code_to_modifier_name(s: KeyCode) -> Option<&'static str> {
+    let ret = match s {
+        KeyCode::KEY_LEFTSHIFT => "leftshift",
+        KeyCode::KEY_RIGHTSHIFT => "rightshift",
+        KeyCode::KEY_LEFTCTRL => "leftctrl",
+        KeyCode::KEY_RIGHTCTRL => "rightctrl",
+        KeyCode::KEY_COMPOSE => "compose",
+        KeyCode::KEY_LEFTMETA => "leftmeta",
+        KeyCode::KEY_FN => "fn",
+        KeyCode::KEY_CAPSLOCK => "capslock",
+        KeyCode::KEY_RIGHTMETA => "rightmeta",
+        _ => return None,
+    };
+    Some(ret)
+}
