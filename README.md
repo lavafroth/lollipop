@@ -107,7 +107,30 @@ Default:`clear_all_with_escape=true`
 
 Possible values: `true`, `yes`, `no`, `false`
 
-### Touchpad
+#### `shared_memory`
+
+Whether to create a file in `/dev/shm` called `lollipop.shm` to communicate the current latched and locked key states.
+Useful when used in conjunction with an on-screen indicator that can watch changes to this file.
+
+Example: `shared_memory=no`  
+Default:`shared_memory=yes`
+
+Possible values: `true`, `yes`, `no`, `false`
+
+An example on-screen indicator is provided for use with [QuickShell](https://quickshell.org) in the [quickshell directory](./quickshell/indicator.qml).
+Run it with:
+
+```sh
+quickshell -p ./quickshell/indicator.qml
+```
+
+It will spawn an indicator to the top right as seen in the screenshot.
+
+![quickshell indicator to the top right](./screenshots/indicator.png)
+
+### Touchpad Options
+
+All options here must be placed under the `[touchpad]` section.
 
 #### `enabled`
 
