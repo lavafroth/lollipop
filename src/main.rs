@@ -65,8 +65,7 @@ pub struct Touchpad {
 #[derive(PartialEq, Eq)]
 pub enum TouchState {
     Idle,
-    Pending(SystemTime),
-    DoubleTapDragging,
+    Pending(Instant),
     DoubleTap,
     Swipe,
 }
@@ -75,26 +74,18 @@ impl Display for TouchState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TouchState::Idle => write!(f, "Idle"),
-            TouchState::Pending(_system_time) => write!(f, "Pending"),
-            TouchState::DoubleTapDragging => write!(f, "DoubleTapDragging"),
+            TouchState::Pending(_time) => write!(f, "Pending"),
             TouchState::DoubleTap => write!(f, "DoubleTap"),
             TouchState::Swipe => write!(f, "Swipe"),
         }
     }
 }
-fn system_time_to_tokio_instant(target_time: SystemTime) -> Instant {
-    let now_system = SystemTime::now();
 
-    match target_time.duration_since(now_system) {
-        Ok(duration) => Instant::now() + duration,
-        Err(_) => Instant::now(),
-    }
-}
 impl Touchpad {
     async fn timeout(&self) {
         if let TouchState::Pending(time) = self.state {
             let deadline = time + self.timeout;
-            tokio::time::sleep_until(system_time_to_tokio_instant(deadline)).await;
+            tokio::time::sleep_until(deadline).await;
         } else {
             std::future::pending::<()>().await;
         }
@@ -134,26 +125,21 @@ impl InternalState {
         }
 
         if touch == TOUCH_RELEASED {
-            match self.touchpad.state {
-                TouchState::Idle
-                | TouchState::Pending(_)
-                | TouchState::DoubleTapDragging
-                | TouchState::DoubleTap => {
-                    self.touchpad.state = TouchState::Pending(SystemTime::now());
+            self.touchpad.state = match self.touchpad.state {
+                //  After a double tap, whether the cursor was being dragged or not, it's time to release the latched keys.
+                TouchState::Idle | TouchState::Pending(_) | TouchState::DoubleTap => {
+                    TouchState::Pending(Instant::now())
                 }
-                TouchState::Swipe => {
-                    self.touchpad.state = TouchState::Idle;
-                    // the cursor was being moved, do nothing
-                }
-            }
+
+                // the cursor was being moved, do nothing
+                TouchState::Swipe => TouchState::Idle,
+            };
+            self.touchpad.position = POSITION_EMPTY;
         }
         // eprint!("{} ", self.touchpad.state);
     }
     fn respond_motion(&mut self, axis: usize, coordinate: i32) {
-        if matches!(
-            self.touchpad.state,
-            TouchState::DoubleTapDragging | TouchState::Swipe
-        ) {
+        if matches!(self.touchpad.state, TouchState::Swipe) {
             return;
         }
 
@@ -162,24 +148,12 @@ impl InternalState {
             return;
         }
 
-        // if the cursor is pushed beyond a `fuzz` sided square
-        // in the touchpad, it is getting dragged
-        let cursor_dragged_beyond_threshold =
+        let cursor_dragged_beyond_threshold_square =
             (self.touchpad.position[axis] - coordinate).abs() as u64 > self.touchpad.fuzz;
-        if cursor_dragged_beyond_threshold {
-            match self.touchpad.state {
-                TouchState::Idle => {
-                    self.touchpad.state = TouchState::Swipe;
-                    self.touchpad.position = POSITION_EMPTY;
-                }
-                TouchState::DoubleTap => {
-                    self.touchpad.state = TouchState::DoubleTapDragging;
-                    self.touchpad.position = POSITION_EMPTY;
-                }
-                _ => {}
-            }
-            // eprint!("{} ", self.touchpad.state);
+        if cursor_dragged_beyond_threshold_square && self.touchpad.state == TouchState::Idle {
+            self.touchpad.state = TouchState::Swipe;
         }
+        // eprint!("{} ", self.touchpad.state);
     }
     fn transition(&mut self, key: KeyCode, pressed: i32, timestamp: SystemTime) -> Vec<InputEvent> {
         let mut events = vec![];
@@ -245,7 +219,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            touchpad_fuzz: 300,
+            touchpad_fuzz: 50,
             clear_all_with_escape: true,
             modifiers: vec![
                 KeyCode::KEY_LEFTSHIFT,
