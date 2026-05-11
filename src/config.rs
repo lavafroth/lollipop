@@ -9,18 +9,20 @@ enum Section {
 }
 
 pub struct Config {
-    pub(crate) modifiers: Vec<KeyCode>,
-    pub(crate) timeout: u64,
-    pub(crate) keyboard_device: Option<String>,
-    pub(crate) clear_all_with_escape: bool,
-    pub(crate) touchpad: bool,
-    pub(crate) touchpad_timeout: u64,
-    pub(crate) touchpad_slop: u64,
+    pub modifiers: Vec<KeyCode>,
+    pub timeout: u64,
+    pub keyboard_device: Option<String>,
+    pub clear_all_with_escape: bool,
+    pub touchpad: bool,
+    pub touchpad_timeout: u64,
+    pub touchpad_slop: u64,
+    pub shm: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
+            shm: false,
             touchpad_slop: 50,
             clear_all_with_escape: true,
             modifiers: vec![
@@ -91,14 +93,17 @@ impl Config {
                 (Section::Global, "clear_all_with_escape", value) => {
                     config.clear_all_with_escape = yesnt(value, line)?
                 }
+                (Section::Global, "shared_memory", value) => {
+                    config.shm = yesnt(value, line)?;
+                }
 
                 (Section::Touchpad, "timeout", timeout_str) => match timeout_str.parse() {
                     Ok(milliseconds) => config.touchpad_timeout = milliseconds,
                     Err(_) => Err(Error::InvalidTimeout(timeout_str.to_owned()))?,
                 },
-                (Section::Touchpad, "slop", fuzz_str) => match fuzz_str.parse() {
-                    Ok(milliseconds) => config.touchpad_slop = milliseconds,
-                    Err(_) => Err(Error::InvalidSlop(fuzz_str.to_owned()))?,
+                (Section::Touchpad, "slop", slop_str) => match slop_str.parse() {
+                    Ok(slop) => config.touchpad_slop = slop,
+                    Err(_) => Err(Error::InvalidSlop(slop_str.to_owned()))?,
                 },
                 (Section::Touchpad, "enable", touchpad) => config.touchpad = yesnt(touchpad, line)?,
                 _ => Err(Error::InvalidConfig(line.to_owned()))?,
@@ -128,6 +133,22 @@ fn modifier_name_to_key_code(s: &str) -> Option<KeyCode> {
         "capslock" => KeyCode::KEY_CAPSLOCK,
         "rightmeta" => KeyCode::KEY_RIGHTMETA,
         "leftalt" => KeyCode::KEY_LEFTALT,
+        _ => return None,
+    };
+    Some(ret)
+}
+pub fn key_code_to_modifier_name(s: KeyCode) -> Option<&'static str> {
+    let ret = match s {
+        KeyCode::KEY_LEFTSHIFT => "leftshift",
+        KeyCode::KEY_RIGHTSHIFT => "rightshift",
+        KeyCode::KEY_LEFTCTRL => "leftctrl",
+        KeyCode::KEY_RIGHTCTRL => "rightctrl",
+        KeyCode::KEY_COMPOSE => "compose",
+        KeyCode::KEY_LEFTMETA => "leftmeta",
+        KeyCode::KEY_FN => "fn",
+        KeyCode::KEY_CAPSLOCK => "capslock",
+        KeyCode::KEY_RIGHTMETA => "rightmeta",
+        KeyCode::KEY_LEFTALT => "leftalt",
         _ => return None,
     };
     Some(ret)
