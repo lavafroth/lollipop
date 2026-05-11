@@ -13,9 +13,10 @@ The 500ms delay is configurable.
 
 ## Features
 - Ridiculously fast.
-- Release binary size is smaller than 1MB.
+- Release binary size is smaller than 2MB.
 - Simple `ini` config file with example provided in the repo.
 - Indicates latched/locked state by switching on the Caps Lock LED.
+- Touchpad support
 
 ## Getting Started
 
@@ -33,7 +34,7 @@ systemctl daemon-reload
 systemctl enable --now lollipop
 ```
 
-## NixOS service
+## NixOS Service
 
 Add the input to your flake
 
@@ -67,7 +68,7 @@ Being an opinionated tool, all configuration settings are optional.
 Check out the example [config file](./config.ini) which shows the use of all the
 config options.
 
-### Global options
+### Global Options
 
 #### `modifiers`
 
@@ -91,10 +92,10 @@ Example: `device=/dev/input0`
 Default:`device=autodetect`
 
 The default `autodetect` automatically picks the first keyboard device.
-*Note:*  Using `autodetect` can sometimes incorrectly identify peripheral devices as keyboards.
+*Note:* Using `autodetect` can sometimes incorrectly identify peripheral devices as keyboards.
 
 > [!NOTE]
-> this option is only available to specify a keyboard when certain peripheral
+> This option is only available to specify a keyboard when certain peripheral
 devices may get incorrectly reported as keyboards.
 
 #### `clear_all_with_escape`
@@ -110,21 +111,31 @@ Possible values: `true`, `yes`, `no`, `false`
 
 #### `enabled`
 
-Whether to enable touchpad support. All latched keys are released after a single tap on the touchpad.
+Whether to enable touchpad support. All latched keys are released after a single tap,
+double tap or tap and drag.
 
 Useful for actions like control-click to open a link in a new tab.
 
-Example: `enabled=no`
+Example: `enabled=no`  
 Default: `enabled=yes`
 
 Possible values: `true`, `yes`, `no`, `false`
 
 #### `timeout`
 
-A small delay in milliseconds between a tap and releasing latched keys.
+The duration between a the two taps of a double tap. If a second tap doesn't occur within
+this duration, all latched keys will be released.
 
 Some apps only respond to actions like control-click if the control is held for a small duration
 after the click is released.
 
-Example: `timeout=0`
+Example: `timeout=0`  
 Default: `timeout=200`
+
+### `slop`
+
+A touch is registered as a tap even if the finger moves slightly by this amount of touchpad units.
+Defaults to a small tolerable value but might require tweaking for different physical touchpad sizes.
+
+Example: `slop=120`  
+Default: `slop=50`
