@@ -1,6 +1,6 @@
 use evdev::{AbsoluteAxisCode, Device, EventStream, InputEvent, KeyEvent, LedCode, LedEvent};
 use std::collections::BTreeMap;
-use std::fmt::{Debug, Display};
+use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -14,54 +14,10 @@ use evdev::{AttributeSet, KeyCode};
 use crate::config::key_code_to_modifier_name;
 mod key_codes;
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum KeyState {
-    Latched(SystemTime),
-    Locked,
-    None,
-}
-
-impl Debug for KeyState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Latched(time) => write!(
-                f,
-                "Latched {}s",
-                time.elapsed().unwrap_or_default().as_secs()
-            ),
-            Self::Locked => write!(f, "Locked"),
-            Self::None => write!(f, "None"),
-        }
-    }
-}
-
-impl KeyState {
-    fn transition(&mut self, time: SystemTime, timeout: Duration) {
-        *self = match self {
-            KeyState::Latched(last_press) => {
-                if let Ok(elapsed) = time.duration_since(*last_press)
-                    && elapsed < timeout
-                {
-                    KeyState::Locked
-                } else {
-                    KeyState::None
-                }
-            }
-            KeyState::Locked => KeyState::None,
-            KeyState::None => KeyState::Latched(time),
-        }
-    }
-
-    fn pressed_state(&self) -> i32 {
-        match self {
-            KeyState::Locked | KeyState::Latched(_) => 1,
-            KeyState::None => 0,
-        }
-    }
-}
+mod key_state;
 
 pub struct InternalState {
-    modifiers: BTreeMap<KeyCode, KeyState>,
+    modifiers: BTreeMap<KeyCode, key_state::KeyState>,
     timeout: Duration,
     clear_all_with_escape: bool,
     touchpad: touchpad::Touchpad,
@@ -75,8 +31,8 @@ impl Display for InternalState {
             };
 
             match state {
-                KeyState::Latched(_system_time) => write!(f, "{key_name} ")?,
-                KeyState::Locked => write!(f, "<b>{key_name}</b> ")?,
+                key_state::KeyState::Latched(_system_time) => write!(f, "{key_name} ")?,
+                key_state::KeyState::Locked => write!(f, "<b>{key_name}</b> ")?,
                 _ => {}
             }
         }
@@ -88,8 +44,8 @@ impl InternalState {
     fn release_latched(&mut self) -> Vec<InputEvent> {
         let mut events = vec![];
         for (key, key_state) in self.modifiers.iter_mut() {
-            if let KeyState::Latched(_) = key_state {
-                *key_state = KeyState::None;
+            if let key_state::KeyState::Latched(_) = key_state {
+                *key_state = key_state::KeyState::None;
                 events.push(*KeyEvent::new(*key, 0));
             }
         }
@@ -101,8 +57,8 @@ impl InternalState {
 
         if self.clear_all_with_escape && key == KeyCode::KEY_ESC {
             for (key, key_state) in self.modifiers.iter_mut() {
-                if !KeyState::None.eq(key_state) {
-                    *key_state = KeyState::None;
+                if !key_state::KeyState::None.eq(key_state) {
+                    *key_state = key_state::KeyState::None;
                     events.push(*KeyEvent::new(*key, 0));
                 }
             }
@@ -275,7 +231,7 @@ async fn main() -> Result<(), anyhow::Error> {
     };
 
     for key in config.modifiers {
-        state.modifiers.insert(key, KeyState::None);
+        state.modifiers.insert(key, key_state::KeyState::None);
     }
 
     let mut keyboard_events = keyboard.into_event_stream()?;
