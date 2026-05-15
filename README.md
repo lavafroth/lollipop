@@ -162,3 +162,22 @@ Defaults to a small tolerable value but might require tweaking for different phy
 
 Example: `slop=120`  
 Default: `slop=50`
+
+# Extra Goodies
+
+## KDE Plasma Indicator
+
+```sh
+mkdir -p ~/.local/bin
+cargo build --release --package lollipop-dbus
+cp ./target/debug/lollipop-dbus ~/.local/bin/
+cat << EOF > ~/.config/autostart/lollipop-dbus.desktop
+[Desktop Entry]
+Exec=$HOME/.local/bin/lollipop-dbus
+Icon=application-x-executable
+Name=lollipop-dbus
+Type=Application
+X-KDE-AutostartScript=true
+EOF
+kpackagetool6 --type Plasma/Applet --install xyz.lavafroth.lollipop.indicator
+```

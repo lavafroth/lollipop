@@ -1,0 +1,14 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0",
+
+    "KPlugin": {
+        "Authors": [{ "Name": "Himadri Bhattacharjee" }],
+        "Description": "Plasma widget that talks to a shared memory watcher for lollipop over dbus. Note: you need to autostart the lollipop-dbus background service.",
+        "Id": "xyz.lavafroth.lollipop.indicator",
+        "Name": "Lollipop sticky keys indicator",
+        "Icon": "utilities-terminal",
+        "ServiceTypes": ["Plasma/Applet"]
+    }
+}
+
