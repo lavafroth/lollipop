@@ -80,7 +80,7 @@ impl Touchpad {
         }
 
         let cursor_dragged_beyond_threshold_square =
-            (self.position[axis] - coordinate).abs() as u64 > self.slop;
+            (self.position[axis] - coordinate).unsigned_abs() as u64 > self.slop;
         if cursor_dragged_beyond_threshold_square && self.state == TouchState::Idle {
             self.state = TouchState::Swipe;
         }

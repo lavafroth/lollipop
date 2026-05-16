@@ -210,6 +210,7 @@ async fn main() -> Result<(), anyhow::Error> {
         MaybeSharedMemory::Some(
             OpenOptions::new()
                 .create(true)
+                .truncate(true)
                 .write(true)
                 .mode(0o644)
                 .open(shared_memory_path)?,
